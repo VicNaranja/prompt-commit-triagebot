@@ -32,6 +32,18 @@ del equipo que seas.
 4. `.env` nunca se commitea. Comprueba que está en `.gitignore` antes de tu
    primer commit.
 
+## Pull requests: siempre contra nuestro fork
+
+Este repo es un fork de la plantilla del profesor (`unai-zulaika/prompt-commit-triagebot`).
+Todas las PRs van contra el `main` de `VicNaranja/prompt-commit-triagebot`. **Nunca** se abre
+una PR, se hace push ni se lanza nada contra el repo del profesor: le notifica y lanza su CI.
+
+- Crea las PRs siempre con el repo de destino explícito:
+  `gh pr create -R VicNaranja/prompt-commit-triagebot --base main`.
+- Antes de hacer push a una rama, comprueba que no tiene una PR abierta contra el repo del
+  profesor (`gh pr list -R unai-zulaika/prompt-commit-triagebot --head <rama>`): cada push la
+  actualiza y vuelve a lanzar su CI. Si la tiene, para y avisa.
+
 ## Comandos útiles
 
 ```bash
