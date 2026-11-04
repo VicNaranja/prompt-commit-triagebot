@@ -96,6 +96,6 @@ Los detalles obligatorios están en:
 
 ## Equipo
 
-Nombres: Victor
+Nombres: Alberto Victor
 
-Metodología: `Spec-Driven`
+Metodología: `B` / `Spec-Driven`
