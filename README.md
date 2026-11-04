@@ -96,6 +96,6 @@ Los detalles obligatorios están en:
 
 ## Equipo
 
-Nombres:
+Nombres: Albeto Victor
 
-Metodología: `Vibe` / `Spec-Driven`
+Metodología: `B` / `Spec-Driven`
