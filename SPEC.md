@@ -1,11 +1,5 @@
 # SPEC.md — Contrato funcional de TriageBot
 
-> **Equipo A (Vibe):** usad este SPEC tal cual. No lo modifiquéis.
->
-> **Equipo B (Spec-Driven):** este SPEC está incompleto a propósito. Vuestra tarea es completarlo
-> antes de pedir código: casos límite, errores, funcionalidades de cada pantalla, tests propios y
-> todo lo que traslade el cliente en `BRIEF.md`.
-
 ## 1. Objetivo
 
 Construir una aplicación web interna para registrar, clasificar y consultar tickets de soporte.
@@ -108,6 +102,7 @@ Errores:
 - `422` si `title` está vacío (o solo espacios) o supera 200 caracteres.
 - `422` si `description` está vacía (o solo espacios) o supera 5000 caracteres.
 
+
 ### `GET /tickets`
 
 Lista tickets en JSON. Query params opcionales: `category`, `priority`, `status`.
@@ -118,13 +113,16 @@ GET /tickets?category=bug&priority=P1&status=open
 
 Devuelve `200` con una lista de tickets con la misma forma que la respuesta de `POST /tickets`.
 
+Orden: por `created_at`, el más reciente primero. Si dos tickets tienen el mismo `created_at`, se
+desempata por `id`, el mayor primero.
+
 ### `PATCH /tickets/{ticket_id}`
 
 Solo se pueden cambiar `status` y `priority`. El resto de campos son inmutables tras la creación.
 
 ```json
 {
-  "status": "in_progress",
+  "status" : "in_progress",
   "priority": "P2"
 }
 ```
@@ -136,6 +134,7 @@ Errores:
 
 - `404` si no existe el ticket.
 - `422` si el valor no pertenece al enum permitido.
+- `422` si el cuerpo está vacío (`{}`).
 
 `GET /` devuelve HTML; `GET /tickets` devuelve JSON. No los confundáis: los tests y el agente del
 Día 3 usan el JSON.
@@ -173,7 +172,21 @@ Requisitos no negociables:
 {"category": "question", "priority": "P3", "tags": []}
 ```
 
-El SPEC no fija el prompt: lo decidís vosotros. Sí es obligatorio que la salida cumpla el contrato.
+Criterio para el prompt: 
+- P1 y categoría `urgent` si el ticket expresa urgencia (ver «Regla de urgencia»). Prevalece sobre los criterios siguientes
+- P3 Si se solicita una mejora o cualquier cosa que no suponga ningun error
+- P2 Si es un error puntual a una persona
+- P1 Si es un error que afecta a toda la compañia 
+
+Regla de urgencia:
+
+- Se aplica si el título o la descripción contienen una palabra de la familia de «urge»: `urge`,
+  `urgen`, `urgente`, `urgentes`, `urgencia`, `urgentemente`. Sin distinguir mayúsculas y minúsculas.
+- No se aplica si la palabra está negada: «no urge», «no es urgente», «sin urgencia».
+- Resultado: `category = "urgent"` y `priority = "P1"`. Los `tags` se generan igual que en cualquier
+  otro ticket (por ejemplo, un error urgente puede llevar el tag `bug`).
+- Ejemplo del brief: «Esto urge porque tenemos demo el viernes» → `urgent`, `P1`.
+
 
 ## 6. Frontend mínimo
 
@@ -200,6 +213,23 @@ Los tests comprueban:
 3. Input inválido devuelve `422`.
 4. Si el clasificador falla, se aplica fallback y la app no cae.
 5. Se puede actualizar estado/prioridad y filtrar tickets.
+
+### Requisitos que imponen los tests
+
+La forma en que están escritos los tests obliga a lo siguiente. Si no se cumple, fallan:
+
+- **Base de datos desde `DATABASE_URL`.** Los tests fijan `DATABASE_URL=sqlite:///<ruta temporal>`
+  para usar una base de datos aislada. La app debe leer esa variable en cada petición (al abrir la
+  conexión), no al importar el módulo, porque los tests la fijan después de importar `app.main`.
+  Si no se lee, los tests escriben en la base real y el test 5 (`len(tickets) == 1`) falla a partir
+  de la segunda ejecución.
+- **Llamar al clasificador a través del módulo.** Los tests sustituyen `app.classifier.classify_ticket`.
+  En `main.py` hay que importar el módulo (`from app import classifier`) y llamar a
+  `classifier.classify_ticket(...)`. Con `from app.classifier import classify_ticket` la sustitución
+  no se aplica y los tests llaman al LLM real.
+- **El endpoint también captura errores del clasificador.** El test 4 hace que `classify_ticket` lance
+  una excepción. `POST /tickets` debe capturar cualquier excepción del clasificador, aplicar el
+  fallback (`question`, `P3`, `[]`) y responder `201`.
 
 ## 8. No negociable
 
