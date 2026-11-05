@@ -217,6 +217,28 @@ GET /tickets?assignee=Ana&overdue=true
 
 Devuelve `200` con una lista de tickets con la misma forma que la respuesta de `POST /tickets`.
 
+### `GET /tickets/stats`
+
+Conteos para presentaciones e informes: solo JSON, sin pantalla. No acepta parámetros: cuenta
+**todos** los tickets.
+
+```json
+{
+  "total": 47,
+  "by_category": { "bug": 18, "feature_request": 12, "question": 9, "urgent": 8 },
+  "by_priority": { "P1": 5, "P2": 30, "P3": 12 },
+  "by_status": { "open": 30, "in_progress": 8, "resolved": 5, "closed": 4 }
+}
+```
+
+- Devuelve `200`. Cada grupo trae **todas** las claves permitidas, con `0` si no hay tickets (con la
+  base de datos vacía, todo es `0`): quien lo consuma no tiene que comprobar si una clave existe.
+- Las claves salen en el orden de los enums de §2. `by_status` incluye `resolved`.
+- La suma de los valores de cada grupo es siempre igual a `total`.
+- Los cuatro números salen de **una sola consulta**, así que son coherentes entre sí aunque se
+  creen tickets mientras tanto.
+- `GET /tickets/stats` no se confunde con un id: `stats` no es un entero.
+
 ### `PATCH /tickets/{ticket_id}`
 
 Solo se pueden cambiar `status`, `priority` y `assignees`. El resto de campos (título,
@@ -343,6 +365,8 @@ Tests propios del equipo (además de los 5; cubren lo añadido en este SPEC):
 - Fecha límite: cálculo por prioridad en hora de Madrid (incluido el cambio de horario),
   recálculo al cambiar la prioridad, reabrir no la reinicia, filtro `overdue`.
 - Frontend: rutas HTML, escapado de HTML en todos los campos de usuario y etiquetas en español.
+- Estadísticas: forma exacta, claves completas con `0`, base vacía, suma de cada grupo igual a
+  `total`, reflejo de crear y de cambiar estado o prioridad, y que no confunde la ruta con un id.
 - Paginación: `limit`/`offset`/`X-Total-Count` en la API, páginas de 20 en el tablero (rangos,
   números fuera de rango, filtros conservados, página 1 al filtrar o crear, página mantenida al
   editar) y filtros y página en la URL.

@@ -21,6 +21,7 @@ from app.models import (
     CATEGORY_LABELS,
     STATUS_LABELS,
     STATUSES,
+    Stats,
     Ticket,
     TicketCreate,
     TicketUpdate,
@@ -113,6 +114,12 @@ def list_tickets(
     }
     response.headers["X-Total-Count"] = str(db.count_tickets(**filters))
     return db.list_tickets(**filters, limit=limit, offset=offset)
+
+
+@app.get("/tickets/stats", response_model=Stats)
+def ticket_stats() -> dict[str, Any]:
+    """Conteos por categoría, prioridad y estado, solo JSON (para presentaciones e informes)."""
+    return db.ticket_stats()
 
 
 @app.patch("/tickets/{ticket_id}", response_model=Ticket)

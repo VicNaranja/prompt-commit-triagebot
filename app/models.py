@@ -17,6 +17,7 @@ ALLOWED_STATUSES = set(get_args(Status))
 # Orden de aparición en los desplegables (el de `Literal`) y etiquetas visibles en pantalla.
 # Los valores internos de la API no cambian; solo se traducen al mostrarlos.
 CATEGORIES = get_args(Category)
+PRIORITIES = get_args(Priority)
 STATUSES = get_args(Status)
 CATEGORY_LABELS = {
     "bug": "Error",
@@ -86,6 +87,15 @@ class TicketUpdate(BaseModel):
         if self.status is None and self.priority is None and self.assignees is None:
             raise ValueError("Hay que indicar al menos `status`, `priority` o `assignees`.")
         return self
+
+
+class Stats(BaseModel):
+    """Conteos de `GET /tickets/stats`: cada grupo trae todas las claves permitidas (con 0)."""
+
+    total: int
+    by_category: dict[str, int]
+    by_priority: dict[str, int]
+    by_status: dict[str, int]
 
 
 class Ticket(BaseModel):

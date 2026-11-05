@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.deadlines import compute_due_at
+from app.models import CATEGORIES, PRIORITIES, STATUSES
 
 DEFAULT_DATABASE_URL = "sqlite:///triagebot.db"
 _MAX_ID = 2**63 - 1  # el mayor entero que admite una columna INTEGER de SQLite
@@ -240,6 +241,31 @@ def list_tickets(
     with connect() as conn:
         rows = conn.execute(query, params).fetchall()
         return _rows_to_tickets(conn, rows)
+
+
+def ticket_stats() -> dict[str, Any]:
+    """Cuántos tickets hay en total y por categoría, prioridad y estado.
+
+    Una sola consulta (así los cuatro números son coherentes entre sí) y todas las claves
+    permitidas aparecen, con 0 si no hay tickets.
+    """
+    stats: dict[str, Any] = {
+        "total": 0,
+        "by_category": dict.fromkeys(CATEGORIES, 0),
+        "by_priority": dict.fromkeys(PRIORITIES, 0),
+        "by_status": dict.fromkeys(STATUSES, 0),
+    }
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT category, priority, status, COUNT(*) AS n FROM tickets"
+            " GROUP BY category, priority, status"
+        ).fetchall()
+    for row in rows:
+        stats["total"] += row["n"]
+        stats["by_category"][row["category"]] += row["n"]
+        stats["by_priority"][row["priority"]] += row["n"]
+        stats["by_status"][row["status"]] += row["n"]
+    return stats
 
 
 def list_assignee_names() -> list[str]:
