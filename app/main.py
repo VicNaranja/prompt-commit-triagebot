@@ -58,7 +58,9 @@ def _classify(title: str, description: str) -> dict[str, Any]:
 
 def _create_classified_ticket(payload: TicketCreate) -> dict[str, Any]:
     classification = _classify(payload.title, payload.description)
-    return db.create_ticket(payload.title, payload.description, classification)
+    return db.create_ticket(
+        payload.title, payload.description, classification, assignees=payload.assignees
+    )
 
 
 @app.get("/health")
@@ -76,13 +78,26 @@ def list_tickets(
     category: str | None = None,
     priority: str | None = None,
     status: str | None = None,
+    assignee: str | None = None,
+    unassigned: bool = False,
 ) -> list[dict[str, Any]]:
-    return db.list_tickets(category=category, priority=priority, status=status)
+    return db.list_tickets(
+        category=category,
+        priority=priority,
+        status=status,
+        assignee=assignee,
+        unassigned=unassigned,
+    )
 
 
 @app.patch("/tickets/{ticket_id}", response_model=Ticket)
 def update_ticket(ticket_id: int, payload: TicketUpdate) -> dict[str, Any]:
-    ticket = db.update_ticket(ticket_id, status=payload.status, priority=payload.priority)
+    ticket = db.update_ticket(
+        ticket_id,
+        status=payload.status,
+        priority=payload.priority,
+        assignees=payload.assignees,
+    )
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     return ticket

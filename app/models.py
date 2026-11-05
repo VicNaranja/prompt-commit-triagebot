@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Literal, get_args
 
-from pydantic import AfterValidator, BaseModel, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, model_validator
 
 Category = Literal["bug", "feature_request", "question", "urgent"]
 Priority = Literal["P1", "P2", "P3"]
@@ -12,6 +12,10 @@ Status = Literal["open", "in_progress", "closed"]
 ALLOWED_CATEGORIES = set(get_args(Category))
 ALLOWED_PRIORITIES = set(get_args(Priority))
 ALLOWED_STATUSES = set(get_args(Status))
+
+MAX_ASSIGNEES = 10
+MAX_ASSIGNEE_LENGTH = 60
+
 
 def _require_alphanumeric(value: str) -> str:
     if not any(char.isalnum() for char in value):
@@ -29,21 +33,34 @@ Description = Annotated[
 ]
 
 
+AssigneeName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_ASSIGNEE_LENGTH)
+]
+# El máximo se aplica a la lista recibida. Los duplicados (sin distinguir mayúsculas) los
+# elimina `db.py`, que conserva la primera grafía y el orden.
+Assignees = Annotated[list[AssigneeName], Field(max_length=MAX_ASSIGNEES)]
+
+
 class TicketCreate(BaseModel):
     title: Title
     description: Description
+    assignees: Assignees = Field(default_factory=list)
 
 
 class TicketUpdate(BaseModel):
-    """Solo `status` y `priority` son modificables; al menos uno es obligatorio."""
+    """Se pueden cambiar `status`, `priority` y `assignees`; al menos uno es obligatorio.
+
+    `assignees` sustituye la lista completa (`[]` quita todos los responsables).
+    """
 
     status: Status | None = None
     priority: Priority | None = None
+    assignees: Assignees | None = None
 
     @model_validator(mode="after")
     def _require_at_least_one_field(self) -> "TicketUpdate":
-        if self.status is None and self.priority is None:
-            raise ValueError("Hay que indicar al menos `status` o `priority`.")
+        if self.status is None and self.priority is None and self.assignees is None:
+            raise ValueError("Hay que indicar al menos `status`, `priority` o `assignees`.")
         return self
 
 
@@ -55,5 +72,6 @@ class Ticket(BaseModel):
     priority: Priority
     tags: list[str]
     status: Status
+    assignees: list[str]
     created_at: datetime
     updated_at: datetime
