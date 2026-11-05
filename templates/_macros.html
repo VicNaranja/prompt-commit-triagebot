@@ -1,0 +1,35 @@
+{# Piezas reutilizadas por la web de gestión y el tablero kanban. #}
+
+{# Clases de los desplegables (filtros y ventana de detalle). #}
+{% set select_class = "mt-1 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-stone-900 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-slate-300" %}
+
+{% macro priority_badge(priority) -%}
+  {%- set styles = {
+    "P1": "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/60 dark:text-red-300 dark:ring-red-900",
+    "P2": "bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:ring-amber-900",
+    "P3": "bg-stone-100 text-stone-600 ring-stone-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700",
+  } -%}
+  <span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ring-1 ring-inset {{ styles[priority] }}">{{ priority }}</span>
+{%- endmacro %}
+
+{% macro status_badge(status) -%}
+  {%- set styles = {
+    "open": "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:ring-sky-900",
+    "in_progress": "bg-violet-50 text-violet-700 ring-violet-200 dark:bg-violet-950/60 dark:text-violet-300 dark:ring-violet-900",
+    "resolved": "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:ring-emerald-900",
+    "closed": "bg-stone-100 text-stone-500 ring-stone-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700",
+  } -%}
+  <span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset {{ styles[status] }}">{{ STATUS_LABELS[status] }}</span>
+{%- endmacro %}
+
+{% macro due_date(value, today) -%}
+  {%- if value < today -%}
+    <span class="font-medium text-red-600 dark:text-red-400" title="Vencido">{{ value | fecha }}</span>
+  {%- else -%}
+    <span>{{ value | fecha }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro technician_name(name) -%}
+  {%- if name -%}{{ name }}{%- else -%}<span class="text-stone-400 dark:text-slate-500">Sin asignar</span>{%- endif -%}
+{%- endmacro %}

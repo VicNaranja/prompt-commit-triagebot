@@ -1,0 +1,78 @@
+{% extends "_base_gestion.html" %}
+{% from "_macros.html" import select_class %}
+
+{% block title %}Tablero kanban · TriageBot{% endblock %}
+{% block heading %}Tablero kanban{% endblock %}
+
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.7/Sortable.min.js"></script>
+{% endblock %}
+
+{% block nav %}
+  <a href="/"
+     class="rounded-full border border-stone-300 px-5 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-100
+            dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+    Volver al listado
+  </a>
+{% endblock %}
+
+{% block content %}
+  <form id="filtros" hx-get="/kanban/tablero" hx-target="#tablero" hx-trigger="change"
+        class="mb-6 max-w-xs">
+    <label class="text-xs font-medium text-stone-500 dark:text-slate-400">Técnico
+      <select name="tecnico" class="{{ select_class }}">
+        <option value="all">Todos</option>
+        <option value="none">Sin asignar</option>
+        {% for name in TECHNICIANS %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+
+  <div id="aviso" class="mb-4 hidden rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/60 dark:text-red-300" role="alert">
+    No se ha podido mover el ticket. Se ha devuelto a su columna.
+  </div>
+
+  {# Se refresca al cambiar el filtro, al mover una tarjeta y al guardar desde la ventana de detalle. #}
+  <div id="tablero" hx-get="/kanban/tablero" hx-include="#filtros"
+       hx-trigger="ticketsChanged from:body">
+    {% include "_kanban_board.html" %}
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    // Activa el arrastre en las columnas cada vez que HTMX carga el tablero.
+    htmx.onLoad(function (element) {
+      element.querySelectorAll("[data-kanban-column]").forEach(function (column) {
+        new Sortable(column, {
+          group: "kanban",
+          animation: 150,
+          ghostClass: "opacity-40",
+          onEnd: moverTicket,
+        });
+      });
+    });
+
+    function moverTicket(event) {
+      if (event.from === event.to) return;
+      document.getElementById("aviso").classList.add("hidden");
+      htmx.ajax("POST", "/kanban/tickets/" + event.item.dataset.ticketId + "/estado", {
+        target: "#tablero",
+        swap: "innerHTML",
+        values: {
+          status: event.to.dataset.status,
+          tecnico: document.querySelector("#filtros [name=tecnico]").value,
+        },
+      });
+    }
+
+    // Si el servidor rechaza el cambio, se avisa y se recarga el tablero (la tarjeta vuelve).
+    function avisarYRecargar(event) {
+      if (!event.detail.pathInfo.requestPath.startsWith("/kanban/tickets/")) return;
+      document.getElementById("aviso").classList.remove("hidden");
+      htmx.trigger(document.body, "ticketsChanged");
+    }
+    document.body.addEventListener("htmx:responseError", avisarYRecargar);
+    document.body.addEventListener("htmx:sendError", avisarYRecargar);
+  </script>
+{% endblock %}

@@ -6,6 +6,9 @@ Ninguno llama al LLM real: cada test sustituye `app.classifier.classify_ticket` 
 función falsa con `monkeypatch`, así que no necesitan API key ni conexión.
 """
 
+import sqlite3
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -421,3 +424,238 @@ def test_patch_with_only_immutable_fields_returns_422(tickets_client):
     response = tickets_client.patch(f"/tickets/{ticket['id']}", json={"category": "question"})
 
     assert response.status_code == 422
+
+
+# --- Técnicos, estado «resuelto» y fecha límite (SPEC §2) ----------------------------------
+# Según CLASSIFICATIONS: «Pantalla en blanco» es P1, «Cambiar contraseña» P2 y
+# «Exportar a PDF» P3.
+
+
+def test_new_ticket_is_unassigned_and_due_date_depends_on_priority(tickets_client, fixed_time):
+    """Un ticket nuevo llega sin técnico; P1 vence el mismo día, P2 al siguiente, P3 a los dos."""
+    fixed_time("2026-03-10T09:00:00Z")
+
+    p1 = create(tickets_client, "Pantalla en blanco")
+    p2 = create(tickets_client, "Cambiar contraseña")
+    p3 = create(tickets_client, "Exportar a PDF")
+
+    assert p1["technician"] is None
+    assert (p1["due_date"], p2["due_date"], p3["due_date"]) == (
+        "2026-03-10",
+        "2026-03-11",
+        "2026-03-12",
+    )
+
+
+def test_due_date_uses_spanish_date(tickets_client, fixed_time):
+    """La fecha límite usa la fecha de España: las 23:30 UTC del día 1 ya son el día 2."""
+    fixed_time("2026-01-01T23:30:00Z")
+
+    ticket = create(tickets_client, "Pantalla en blanco")  # P1: vence el mismo día (en España)
+
+    assert ticket["due_date"] == "2026-01-02"
+
+
+def test_patch_priority_recalculates_due_date_from_creation(tickets_client, fixed_time):
+    """Al cambiar la prioridad se recalcula la fecha límite, contando desde la creación."""
+    fixed_time("2026-03-10T09:00:00Z")
+    ticket = create(tickets_client, "Pantalla en blanco")  # P1 → 10/03
+    fixed_time("2026-03-20T09:00:00Z")  # el cambio se hace días después
+
+    patched = tickets_client.patch(f"/tickets/{ticket['id']}", json={"priority": "P3"}).json()
+
+    assert patched["due_date"] == "2026-03-12"
+
+
+def test_patch_can_set_status_resolved(tickets_client):
+    """«resolved» es un estado válido."""
+    ticket = create(tickets_client, "Pantalla en blanco")
+
+    patched = tickets_client.patch(f"/tickets/{ticket['id']}", json={"status": "resolved"})
+
+    assert patched.status_code == 200
+    assert patched.json()["status"] == "resolved"
+
+
+def test_patch_assigns_and_unassigns_technician(tickets_client):
+    """Se asigna un técnico de la lista y con null el ticket vuelve a quedar sin asignar."""
+    ticket = create(tickets_client, "Pantalla en blanco")
+    url = f"/tickets/{ticket['id']}"
+
+    assigned = tickets_client.patch(url, json={"technician": "Técnico 3"}).json()
+    unassigned = tickets_client.patch(url, json={"technician": None}).json()
+
+    assert assigned["technician"] == "Técnico 3"
+    assert unassigned["technician"] is None
+
+
+def test_patch_rejects_technician_not_in_list(tickets_client):
+    """Un técnico que no está en la lista devuelve 422."""
+    ticket = create(tickets_client, "Pantalla en blanco")
+
+    response = tickets_client.patch(f"/tickets/{ticket['id']}", json={"technician": "Técnico 99"})
+
+    assert response.status_code == 422
+
+
+def test_get_filters_by_several_statuses(tickets_client):
+    """`status` se puede repetir: open + in_progress son los activos."""
+    open_ticket = create(tickets_client, "Pantalla en blanco")
+    in_progress = create(tickets_client, "Cambiar contraseña")
+    resolved = create(tickets_client, "Exportar a PDF")
+    tickets_client.patch(f"/tickets/{in_progress['id']}", json={"status": "in_progress"})
+    tickets_client.patch(f"/tickets/{resolved['id']}", json={"status": "resolved"})
+
+    tickets = tickets_client.get("/tickets", params={"status": ["open", "in_progress"]}).json()
+
+    assert {ticket["id"] for ticket in tickets} == {open_ticket["id"], in_progress["id"]}
+
+
+def test_get_filters_by_technician_and_unassigned(tickets_client):
+    """Filtro por técnico: por nombre, o `none` para los que no tienen técnico."""
+    assigned = create(tickets_client, "Pantalla en blanco")
+    unassigned = create(tickets_client, "Exportar a PDF")
+    tickets_client.patch(f"/tickets/{assigned['id']}", json={"technician": "Técnico 1"})
+
+    by_name = tickets_client.get("/tickets", params={"technician": "Técnico 1"}).json()
+    by_none = tickets_client.get("/tickets", params={"technician": "none"}).json()
+
+    assert [ticket["id"] for ticket in by_name] == [assigned["id"]]
+    assert [ticket["id"] for ticket in by_none] == [unassigned["id"]]
+
+
+@pytest.mark.parametrize(
+    ("due", "expected_title"),
+    [
+        ("overdue", "Pantalla en blanco"),  # P1 creado el 10 → vence el 10
+        ("today", "Cambiar contraseña"),  # P2 creado el 10 → vence el 11
+        ("tomorrow", "Exportar a PDF"),  # P3 creado el 10 → vence el 12
+    ],
+)
+def test_get_filters_by_due_date(tickets_client, fixed_time, monkeypatch, due, expected_title):
+    """Filtro por fecha límite respecto a «hoy» (aquí, 11/03/2026)."""
+    fixed_time("2026-03-10T09:00:00Z")
+    for title in CLASSIFICATIONS:
+        create(tickets_client, title)
+    monkeypatch.setattr("app.dates.today", lambda: date(2026, 3, 11))
+
+    tickets = tickets_client.get("/tickets", params={"due": due}).json()
+
+    assert [ticket["title"] for ticket in tickets] == [expected_title]
+
+
+def test_get_with_unknown_due_value_returns_empty_list(tickets_client):
+    """Un valor desconocido en `due` devuelve una lista vacía."""
+    create(tickets_client, "Pantalla en blanco")
+
+    assert tickets_client.get("/tickets", params={"due": "ayer"}).json() == []
+
+
+def test_old_database_is_migrated(client, tmp_path):
+    """Una base de datos creada antes de existir technician y due_date se migra al usarla."""
+    with sqlite3.connect(tmp_path / "test.db") as conn:
+        conn.execute(
+            "CREATE TABLE tickets (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,"
+            " description TEXT NOT NULL, category TEXT NOT NULL, priority TEXT NOT NULL,"
+            " tags TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL,"
+            " updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO tickets (title, description, category, priority, tags, status,"
+            " created_at, updated_at) VALUES ('Antiguo', 'd', 'bug', 'P2', '[]', 'open',"
+            " '2026-03-10T09:00:00Z', '2026-03-10T09:00:00Z')"
+        )
+
+    tickets = client.get("/tickets").json()
+
+    assert tickets[0]["technician"] is None
+    assert tickets[0]["due_date"] == "2026-03-11"
+
+
+# --- Web de gestión y tablero kanban (SPEC §6) ---------------------------------------------
+
+
+def test_management_page_shows_only_active_tickets_by_default(tickets_client):
+    """La web de gestión muestra por defecto solo los tickets activos."""
+    create(tickets_client, "Pantalla en blanco")
+    closed = create(tickets_client, "Exportar a PDF")
+    tickets_client.patch(f"/tickets/{closed['id']}", json={"status": "closed"})
+
+    page = tickets_client.get("/")
+
+    assert page.status_code == 200
+    assert "Pantalla en blanco" in page.text
+    assert "Exportar a PDF" not in page.text
+
+
+def test_management_table_applies_web_filters(tickets_client):
+    """La tabla filtra por estado y prioridad (con los nombres de filtro de la web)."""
+    create(tickets_client, "Pantalla en blanco")
+    closed = create(tickets_client, "Exportar a PDF")
+    tickets_client.patch(f"/tickets/{closed['id']}", json={"status": "closed"})
+
+    closed_table = tickets_client.get("/gestion/tabla", params={"estado": "closed"}).text
+    p1_table = tickets_client.get("/gestion/tabla", params={"estado": "all", "prioridad": "P1"})
+
+    assert "Exportar a PDF" in closed_table and "Pantalla en blanco" not in closed_table
+    assert "Pantalla en blanco" in p1_table.text and "Exportar a PDF" not in p1_table.text
+
+
+def test_ticket_detail_and_save(tickets_client):
+    """La ventana de detalle muestra el ticket y guarda estado, prioridad y técnico."""
+    ticket = create(tickets_client, "Pantalla en blanco", "Descripción completa del problema")
+
+    detail = tickets_client.get(f"/gestion/tickets/{ticket['id']}")
+    saved = tickets_client.post(
+        f"/gestion/tickets/{ticket['id']}",
+        data={"status": "in_progress", "priority": "P2", "technician": "Técnico 2"},
+    )
+    stored = tickets_client.get("/tickets").json()[0]
+
+    assert "Descripción completa del problema" in detail.text
+    assert saved.status_code == 200
+    assert saved.headers["HX-Trigger"] == "ticketsChanged"
+    assert (stored["status"], stored["priority"], stored["technician"]) == (
+        "in_progress",
+        "P2",
+        "Técnico 2",
+    )
+
+
+def test_ticket_detail_mark_as_resolved(tickets_client):
+    """El botón «Marcar como resuelto» pasa el ticket a resolved."""
+    ticket = create(tickets_client, "Pantalla en blanco")
+
+    tickets_client.post(f"/gestion/tickets/{ticket['id']}", data={"accion": "resolver"})
+
+    assert tickets_client.get("/tickets").json()[0]["status"] == "resolved"
+
+
+def test_ticket_detail_unknown_ticket_returns_404(tickets_client):
+    """La ventana de detalle de un ticket que no existe devuelve 404."""
+    assert tickets_client.get("/gestion/tickets/9999").status_code == 404
+
+
+def test_kanban_move_changes_status(tickets_client):
+    """Mover una tarjeta en el kanban cambia el estado del ticket."""
+    ticket = create(tickets_client, "Pantalla en blanco")
+
+    page = tickets_client.get("/kanban")
+    moved = tickets_client.post(f"/kanban/tickets/{ticket['id']}/estado", data={"status": "closed"})
+
+    assert page.status_code == 200
+    assert moved.status_code == 200
+    assert tickets_client.get("/tickets").json()[0]["status"] == "closed"
+
+
+def test_kanban_move_rejects_invalid_status_and_unknown_ticket(tickets_client):
+    """Mover a un estado no válido da 422; mover un ticket que no existe, 404."""
+    ticket = create(tickets_client, "Pantalla en blanco")
+
+    invalid = tickets_client.post(
+        f"/kanban/tickets/{ticket['id']}/estado", data={"status": "CLOSED"}
+    )
+    unknown = tickets_client.post("/kanban/tickets/9999/estado", data={"status": "closed"})
+
+    assert invalid.status_code == 422
+    assert unknown.status_code == 404
