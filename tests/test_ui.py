@@ -130,3 +130,28 @@ def test_ui_update_with_invalid_value_shows_error_and_changes_nothing(client):
     assert response.status_code == 200
     assert 'role="alert"' in response.text
     assert client.get("/tickets").json()[0]["status"] == "open"
+
+
+XSS = "<script>alert(1)</script>"
+XSS_ESCAPED = "&lt;script&gt;alert(1)&lt;/script&gt;"
+
+
+@pytest.mark.parametrize("field", ["title", "description", "tag"])
+def test_html_is_escaped_so_scripts_are_shown_as_text(client, monkeypatch, field):
+    tags = [XSS] if field == "tag" else []
+    monkeypatch.setattr(
+        "app.classifier.classify_ticket",
+        lambda title, description: {"category": "bug", "priority": "P1", "tags": tags},
+    )
+    payload = {
+        "title": XSS if field == "title" else "Ticket normal",
+        "description": XSS if field == "description" else "Descripción normal",
+    }
+
+    created = client.post("/ui/tickets", data=payload)
+    index = client.get("/")
+
+    for response in (created, index):
+        assert response.status_code == 200
+        assert XSS not in response.text
+        assert XSS_ESCAPED in response.text

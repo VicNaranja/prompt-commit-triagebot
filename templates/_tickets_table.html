@@ -12,6 +12,7 @@
 {% if error %}
 <p role="alert" class="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{{ error }}</p>
 {% endif %}
+<div class="overflow-x-auto">
 <table class="min-w-full divide-y divide-slate-200 bg-white shadow-sm ring-1 ring-slate-200 rounded-lg overflow-hidden">
   <thead class="bg-slate-100">
     <tr>
@@ -75,3 +76,4 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
