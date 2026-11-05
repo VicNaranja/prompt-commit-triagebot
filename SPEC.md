@@ -18,14 +18,48 @@ Campos mínimos:
 | `category` | str | `bug`, `feature_request`, `question`, `urgent` |
 | `priority` | str | `P1`, `P2`, `P3` |
 | `tags` | list[str] | Lista, puede estar vacía |
-| `status` | str | `open`, `in_progress`, `closed` |
+| `status` | str | `open`, `in_progress`, `resolved`, `closed` |
+| `technician` | str \| null | Uno de la lista de técnicos (ver abajo), o `null` si está sin asignar |
+| `due_date` | date | Fecha límite (`AAAA-MM-DD`), calculada en servidor (ver abajo) |
 | `created_at` | datetime | UTC, generado en servidor |
 | `updated_at` | datetime | UTC, actualizado en cambios relevantes |
 
 Valores por defecto:
 
 - `status`: `open`
+- `technician`: `null` (los tickets nuevos llegan sin asignar)
 - fallback de clasificación: `category="question"`, `priority="P3"`, `tags=[]`
+
+### Estados
+
+`open` (abierto) → `in_progress` (en curso) → `resolved` (resuelto) → `closed` (cerrado).
+`resolved` es un estado intermedio antes de cerrar. No se obliga a ningún orden: cualquier cambio de
+estado está permitido.
+
+Para filtrar se agrupan así:
+
+- **Activos:** `open` e `in_progress`.
+- **Resueltos:** `resolved`.
+- **Cerrados:** `closed`.
+
+### Técnicos
+
+Cada ticket lo gestiona un técnico, o ninguno si está sin asignar. La lista de técnicos es estática:
+una lista fija definida en el código (`app/models.py`). Por ahora, diez: de `Técnico 1` a
+`Técnico 10`.
+
+### Fecha límite (`due_date`)
+
+Se calcula a partir de la prioridad y de la fecha de creación, en días naturales y con la hora de
+España (`Europe/Madrid`):
+
+- `P1`: el mismo día de la creación.
+- `P2`: el día siguiente.
+- `P3`: dos días después.
+
+Si cambia la prioridad, la fecha límite se recalcula, contando siempre desde la fecha de creación
+(no desde el día del cambio). Un ticket está **vencido** si su fecha límite es anterior a hoy (hora
+de España).
 
 Los valores de `category`, `priority` y `status` son vinculantes: exactamente esos, en minúsculas
 (salvo `P1`–`P3`). Si el código devuelve `"URGENT"`, los tests fallan.
@@ -63,9 +97,18 @@ El stack cerrado no está aquí: está en `BRIEF.md`, sección «Restricciones t
 |---|---|---|
 | `GET /health` | `200 {"status": "ok"}` | — |
 | `POST /tickets` | `201` con el ticket ya clasificado | `422` si título o descripción vacíos o demasiado largos |
-| `GET /tickets` | `200` lista, filtrable por `category`, `priority` y `status` | — |
-| `PATCH /tickets/{ticket_id}` | `200` ticket actualizado | `404` si no existe · `422` si el valor no está en el enum |
-| `GET /` | `200` HTML con el tablero (ver §6) | — |
+| `GET /tickets` | `200` lista, filtrable por `category`, `priority`, `status`, `technician` y `due` | — |
+| `PATCH /tickets/{ticket_id}` | `200` ticket actualizado | `404` si no existe · `422` si el valor no está en el enum o en la lista de técnicos |
+| `GET /` | `200` HTML con la web de gestión de tickets (ver §6) | — |
+| `GET /gestion/tabla` | `200` HTML con la tabla de tickets filtrada (la usa la web de gestión) | — |
+| `GET /gestion/tickets/{ticket_id}` | `200` HTML con la ventana de detalle del ticket | `404` si no existe |
+| `POST /gestion/tickets/{ticket_id}` | `200` HTML: guarda los cambios de la ventana de detalle | `404` si no existe |
+| `GET /kanban` | `200` HTML con el tablero kanban (ver §6) | — |
+| `GET /kanban/tablero` | `200` HTML con las columnas del tablero, filtrable por `technician` | — |
+| `POST /kanban/tickets/{ticket_id}/estado` | `200` HTML con el tablero actualizado tras mover un ticket | `404` si no existe · `422` si el estado no es válido |
+| `GET /nuevo` | `200` HTML con la web de creación de tickets, paso 1 (ver §6) | — |
+| `POST /nuevo/titulo` | `200` HTML del paso 2, o del paso 1 con el error | — |
+| `POST /nuevo/descripcion` | `200` HTML con el agradecimiento, o del paso 2 con el error | — |
 
 ### `POST /tickets`
 
@@ -92,6 +135,8 @@ Response `201`:
   "priority": "P1",
   "tags": ["login", "blank-screen"],
   "status": "open",
+  "technician": null,
+  "due_date": "2026-06-29",
   "created_at": "2026-06-29T09:30:00Z",
   "updated_at": "2026-06-29T09:30:00Z"
 }
@@ -105,10 +150,19 @@ Errores:
 
 ### `GET /tickets`
 
-Lista tickets en JSON. Query params opcionales: `category`, `priority`, `status`.
+Lista tickets en JSON. Query params opcionales:
+
+- `category`, `priority`: valor exacto.
+- `status`: valor exacto. Se puede repetir para pedir varios estados a la vez
+  (`?status=open&status=in_progress` son los activos).
+- `technician`: nombre exacto del técnico, o `none` para los tickets sin asignar.
+- `due`: `overdue` (vencidos), `today` (vencen hoy) o `tomorrow` (vencen mañana).
+
+Un valor desconocido en cualquier filtro no da error: devuelve una lista vacía.
 
 ```text
 GET /tickets?category=bug&priority=P1&status=open
+GET /tickets?status=open&status=in_progress&technician=none&due=overdue
 ```
 
 Devuelve `200` con una lista de tickets con la misma forma que la respuesta de `POST /tickets`.
@@ -118,22 +172,25 @@ desempata por `id`, el mayor primero.
 
 ### `PATCH /tickets/{ticket_id}`
 
-Solo se pueden cambiar `status` y `priority`. El resto de campos son inmutables tras la creación.
+Solo se pueden cambiar `status`, `priority` y `technician`. El resto de campos son inmutables tras
+la creación (`due_date` se recalcula sola si cambia la prioridad).
 
 ```json
 {
   "status" : "in_progress",
-  "priority": "P2"
+  "priority": "P2",
+  "technician": "Técnico 1"
 }
 ```
 
-- `status`: `open`, `in_progress`, `closed`
+- `status`: `open`, `in_progress`, `resolved`, `closed`
 - `priority`: `P1`, `P2`, `P3`
+- `technician`: uno de la lista de técnicos, o `null` para dejarlo sin asignar.
 
 Errores:
 
 - `404` si no existe el ticket.
-- `422` si el valor no pertenece al enum permitido.
+- `422` si el valor no pertenece al enum permitido o el técnico no está en la lista.
 - `422` si el cuerpo está vacío (`{}`).
 
 `GET /` devuelve HTML; `GET /tickets` devuelve JSON. No los confundáis: los tests y el agente del
@@ -190,11 +247,80 @@ Regla de urgencia:
 
 ## 6. Frontend mínimo
 
-`GET /` devuelve una página HTML con:
+Hay dos webs separadas: una para crear tickets y otra para gestionarlos.
 
-1. Formulario para crear ticket.
-2. Tablero de tickets.
-3. Filtros por categoría, prioridad y estado.
+**Modo oscuro.** Las tres páginas (`/nuevo`, `/` y `/kanban`) tienen un botón para cambiar entre modo
+claro y oscuro. Siempre empiezan en claro; la elección se recuerda en ese navegador.
+
+### Web de creación de tickets (`/nuevo`)
+
+Página de bienvenida con estilo minimalista. Pide los datos en dos pasos, sin recargar la página:
+
+1. **Título.** Mensaje de bienvenida y un único campo: el título. Botón «Siguiente».
+2. **Descripción.** Un único campo: la descripción. Botón «Aceptar».
+3. **Agradecimiento.** Al aceptar se crea el ticket (igual que `POST /tickets`: se valida, se
+   clasifica y se guarda) y se muestra un mensaje de agradecimiento por su ticket, con un enlace
+   para crear otro.
+
+Reglas:
+
+- Mismas validaciones que la API: título de 1 a 200 caracteres y descripción de 1 a 5000, tras
+  quitar espacios. Si no se cumplen, se queda en el mismo paso y muestra el error junto al campo.
+- La clasificación tarda unos segundos (llamada al LLM): mientras tanto el botón «Aceptar» se
+  desactiva y se muestra que se está enviando.
+- Si el clasificador falla, el ticket se crea con el fallback y se muestra el agradecimiento igual.
+- La página no muestra la clasificación: es para quien abre el ticket, no para Soporte.
+
+### Web de gestión de tickets (`GET /`)
+
+Para el equipo de Soporte. Muestra el listado de tickets y permite gestionarlos sin recargar la
+página (HTMX).
+
+**Listado.** Una tabla con una fila por ticket y estas columnas: título, categoría, prioridad,
+estado, técnico («Sin asignar» si no tiene), fecha límite (en rojo si está vencida) y fecha de
+creación. Orden: el más reciente primero, como `GET /tickets`. Si no hay tickets que cumplan los
+filtros, se muestra un mensaje en lugar de la tabla.
+
+**Filtros**, encima de la tabla. Al cambiar uno se refresca la tabla:
+
+| Filtro | Opciones | Por defecto |
+|---|---|---|
+| Estado | Activos · Resueltos · Cerrados · Todos | Activos |
+| Prioridad | Todas · P1 · P2 · P3 | Todas |
+| Técnico | Todos · Sin asignar · cada técnico de la lista | Todos |
+| Fecha límite | Todas · Vencidos · Vencen hoy · Vencen mañana | Todas |
+
+Por defecto, al entrar, se ven solo los tickets activos.
+
+**Ventana de detalle.** Al pulsar un ticket se abre una ventana emergente (popup) con:
+
+- Todos sus datos: título, descripción completa, categoría, tags, fecha de creación y fecha límite.
+- Desplegables para cambiar estado, prioridad y técnico, y un botón «Guardar».
+- Un botón «Marcar como resuelto» que pasa el ticket a `resolved` directamente.
+
+Al guardar, se cierra la ventana y se refresca la tabla con los filtros que hubiera. Se cierra
+también con un botón «Cerrar», con la tecla Escape o pulsando fuera.
+
+Arriba de la página, un botón «Nuevo ticket» lleva a la web de creación (`/nuevo`) y otro,
+«Tablero kanban», lleva a `/kanban`.
+
+### Tablero kanban (`/kanban`)
+
+Complemento de la web de gestión: muestra los tickets por estado y permite cambiarlos de estado
+arrastrándolos.
+
+- **Columnas:** una por estado, en este orden: Abierto (`open`), En curso (`in_progress`), Resuelto
+  (`resolved`) y Cerrado (`closed`). Cada columna muestra cuántos tickets tiene.
+- **Tarjetas:** una por ticket, con título, prioridad, técnico («Sin asignar» si no tiene) y fecha
+  límite (en rojo si está vencida). Dentro de cada columna, el más reciente primero.
+- **Mover:** arrastrar una tarjeta a otra columna cambia el estado del ticket (igual que el `PATCH`)
+  y se guarda al soltarla. Si falla, la tarjeta vuelve a su columna y se muestra un aviso. El
+  arrastre usa la librería SortableJS, cargada por CDN con versión fija
+  (`https://cdn.jsdelivr.net/npm/sortablejs@1.15.7/Sortable.min.js`); funciona también en móvil.
+- **Filtro por técnico**, encima del tablero: Todos · Sin asignar · cada técnico de la lista. Por
+  defecto, Todos. Al cambiarlo se refresca el tablero.
+- **Detalle:** al pulsar una tarjeta se abre la misma ventana de detalle que en la web de gestión.
+- Un botón «Volver al listado» lleva a `/`.
 
 Recomendación:
 

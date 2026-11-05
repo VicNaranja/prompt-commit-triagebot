@@ -1,18 +1,59 @@
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TriageBot</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-</head>
-<body class="bg-slate-50 text-slate-900">
-  <main class="mx-auto max-w-6xl p-6">
-    <h1 class="text-3xl font-bold">TriageBot</h1>
-    <p class="mt-2 text-slate-600">Tablero de incidencias con clasificación automática por IA.</p>
+{% extends "_base_gestion.html" %}
+{% from "_macros.html" import select_class %}
 
-    <!-- TODO: formulario + filtros + tabla HTMX -->
-  </main>
-</body>
-</html>
+{% block title %}Gestión de tickets · TriageBot{% endblock %}
+{% block heading %}Gestión de tickets{% endblock %}
+
+{% block nav %}
+  <a href="/nuevo"
+     class="rounded-full border border-stone-300 px-5 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-100
+            dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+    Nuevo ticket
+  </a>
+  <a href="/kanban"
+     class="rounded-full bg-stone-900 px-5 py-2 text-sm font-medium text-white transition hover:bg-stone-700
+            dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300">
+    Tablero kanban
+  </a>
+{% endblock %}
+
+{% block content %}
+  <form id="filtros" hx-get="/gestion/tabla" hx-target="#tabla" hx-trigger="change"
+        class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <label class="text-xs font-medium text-stone-500 dark:text-slate-400">Estado
+      <select name="estado" class="{{ select_class }}">
+        <option value="active" {% if filters.estado == "active" %}selected{% endif %}>Activos</option>
+        <option value="resolved">Resueltos</option>
+        <option value="closed">Cerrados</option>
+        <option value="all">Todos</option>
+      </select>
+    </label>
+    <label class="text-xs font-medium text-stone-500 dark:text-slate-400">Prioridad
+      <select name="prioridad" class="{{ select_class }}">
+        <option value="all">Todas</option>
+        {% for priority in PRIORITIES %}<option value="{{ priority }}">{{ priority }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="text-xs font-medium text-stone-500 dark:text-slate-400">Técnico
+      <select name="tecnico" class="{{ select_class }}">
+        <option value="all">Todos</option>
+        <option value="none">Sin asignar</option>
+        {% for name in TECHNICIANS %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="text-xs font-medium text-stone-500 dark:text-slate-400">Fecha límite
+      <select name="vence" class="{{ select_class }}">
+        <option value="all">Todas</option>
+        <option value="overdue">Vencidos</option>
+        <option value="today">Vencen hoy</option>
+        <option value="tomorrow">Vencen mañana</option>
+      </select>
+    </label>
+  </form>
+
+  {# Se refresca al cambiar un filtro y cuando se guarda un ticket (evento ticketsChanged). #}
+  <div id="tabla" hx-get="/gestion/tabla" hx-include="#filtros"
+       hx-trigger="ticketsChanged from:body">
+    {% include "_tickets_table.html" %}
+  </div>
+{% endblock %}

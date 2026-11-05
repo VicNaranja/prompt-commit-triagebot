@@ -1,0 +1,20 @@
+{# Modo oscuro (SPEC §6): se activa solo con el botón y se recuerda en el navegador.
+   Va en el <head>, justo después de cargar Tailwind, para que no parpadee al cargar. #}
+<script>
+  tailwind.config = { darkMode: "class" };
+  try {
+    if (localStorage.getItem("triagebot-tema") === "oscuro") {
+      document.documentElement.classList.add("dark");
+    }
+  } catch (error) {}
+
+  function cambiarTema() {
+    const oscuro = document.documentElement.classList.toggle("dark");
+    try {
+      localStorage.setItem("triagebot-tema", oscuro ? "oscuro" : "claro");
+    } catch (error) {}
+  }
+</script>
+<style>
+  html.dark { color-scheme: dark; }
+</style>
