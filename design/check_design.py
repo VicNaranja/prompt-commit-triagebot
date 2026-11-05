@@ -22,6 +22,7 @@ Comprueba, para cada tema (claro/oscuro) y cada ancho (1280, 768 y 375 px):
 y además, el interruptor de tema (cambia, se recuerda al recargar y «Auto» sigue al sistema).
 """
 
+import re
 import subprocess
 import sys
 import time
@@ -222,6 +223,10 @@ def interactions(browser, base_url: str, fail, report: list[str]) -> None:
             total = count()
             if total < 9:
                 fail(f"[{label}] se esperaban 9 tickets de demo y hay {total}")
+            captions = page.locator(ROWS + " td[data-label=Estado] p").all_inner_texts()
+            bad = [c for c in captions if not re.fullmatch(r"desde \d\d/\d\d \d\d:\d\d · hace .+", c.strip())]
+            if len(captions) != total or bad:
+                fail(f"[{label} · inicio] «desde cuándo» ausente o mal formado: {bad[:2]} ({len(captions)}/{total})")
             measured += audit_dom(page, label, "inicio", fail)
 
             # Filtro por estado
@@ -307,6 +312,10 @@ def interactions(browser, base_url: str, fail, report: list[str]) -> None:
             status = page.locator(STATUSES).first.input_value()
             if status != "resolved":
                 fail(f"[{label} · editar estado] el estado quedó en «{status}»")
+            # «Desde cuándo»: al cambiar el estado desde la fila, pasa a «hace instantes / N min»
+            caption = page.locator(ROWS + " td[data-label=Estado] p").first.inner_text()
+            if not re.search(r"desde \d\d/\d\d \d\d:\d\d · hace (instantes|\d+ min)", caption):
+                fail(f"[{label} · editar estado] «desde cuándo» no se actualizó: «{caption}»")
             measured += audit_dom(page, label, "editar estado", fail)
 
             # Editar responsables y comprobar que persiste tras recargar

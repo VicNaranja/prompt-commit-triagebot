@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     tags        TEXT NOT NULL DEFAULT '[]',
     status      TEXT NOT NULL DEFAULT 'open',
     due_at      TEXT,
+    status_changed_at TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -65,6 +66,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(tickets)")}
     if "due_at" not in columns:
         conn.execute("ALTER TABLE tickets ADD COLUMN due_at TEXT")
+    if "status_changed_at" not in columns:
+        conn.execute("ALTER TABLE tickets ADD COLUMN status_changed_at TEXT")
+    # Lo más cercano que se conocía en las bases antiguas: la última modificación.
+    conn.execute(
+        "UPDATE tickets SET status_changed_at = updated_at WHERE status_changed_at IS NULL"
+    )
     pending = conn.execute(
         "SELECT id, created_at, priority FROM tickets WHERE due_at IS NULL"
     ).fetchall()
@@ -145,7 +152,8 @@ def create_ticket(
     with connect() as conn:
         cursor = conn.execute(
             "INSERT INTO tickets (title, description, category, priority, tags, status,"
-            " due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)",
+            " due_at, status_changed_at, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)",
             (
                 title,
                 description,
@@ -153,6 +161,7 @@ def create_ticket(
                 classification["priority"],
                 json.dumps(classification["tags"], ensure_ascii=False),
                 compute_due_at(now, classification["priority"]),
+                now,
                 now,
                 now,
             ),
@@ -220,21 +229,25 @@ def update_ticket(
 
     `assignees` sustituye la lista completa; `None` la deja como está y `[]` la vacía. Si cambia
     la prioridad, `due_at` se recalcula desde `created_at` (no desde el momento del cambio).
+    `status_changed_at` solo se actualiza si el estado cambia de verdad.
     """
     changes = {"status": status, "priority": priority}
     active = {column: value for column, value in changes.items() if value}
+    now = _now()
     with connect() as conn:
+        existing = conn.execute(
+            "SELECT status, created_at FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
+        if existing is None:
+            return None
         if priority:
-            existing = conn.execute(
-                "SELECT created_at FROM tickets WHERE id = ?", (ticket_id,)
-            ).fetchone()
-            if existing is None:
-                return None
             active["due_at"] = compute_due_at(existing["created_at"], priority)
+        if status and status != existing["status"]:
+            active["status_changed_at"] = now
         assignments = ", ".join(f"{column} = ?" for column in [*active, "updated_at"])
         cursor = conn.execute(
             f"UPDATE tickets SET {assignments} WHERE id = ?",
-            (*active.values(), _now(), ticket_id),
+            (*active.values(), now, ticket_id),
         )
         if cursor.rowcount == 0:
             return None

@@ -74,6 +74,7 @@
               <option value="{{ value }}" {% if value == ticket.status %}selected{% endif %}>{{ STATUS_LABELS[value] }} ({{ value }})</option>
               {% endfor %}
             </select>
+            <p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde {{ ticket.status_changed_at | madrid }}</span> · <span class="whitespace-nowrap">{{ ticket.status_changed_at | ago }}</span></p>
           </div>
         </td>
         <td class="td" data-label="Responsables">

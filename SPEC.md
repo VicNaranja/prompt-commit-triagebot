@@ -25,6 +25,7 @@ Campos mínimos:
 | `priority` | str | `P1`, `P2`, `P3` |
 | `tags` | list[str] | Lista, puede estar vacía |
 | `status` | str | `open`, `in_progress`, `resolved`, `closed` |
+| `status_changed_at` | datetime | UTC, desde cuándo tiene el ticket su estado actual (ver «Estados») |
 | `assignees` | list[str] | Responsables del ticket (ver «Responsables»). Puede estar vacía |
 | `due_at` | datetime | UTC, calculado en servidor según la prioridad (ver «Fecha límite») |
 | `overdue` | bool | Calculado al consultar: `true` si el ticket está vencido (ver «Fecha límite») |
@@ -58,6 +59,12 @@ responsable es un nombre de texto libre.
 - **Reabrir** es poner de nuevo el estado `open` en un ticket `resolved` o `closed`. La API no
   restringe los saltos de estado: cualquier valor del enum es válido desde cualquier estado.
 - Reabrir **no** reinicia la fecha límite: el plazo sigue contando desde `created_at`.
+- `status_changed_at` es el momento en que el ticket pasó a su estado actual («desde cuándo está
+  así»). Al crear el ticket vale `created_at`. Solo cambia cuando el estado **cambia de verdad**:
+  un `PATCH` con el mismo estado, o que solo toque `priority` o `assignees`, no lo modifica.
+  Reabrir (`resolved`/`closed` → `open`) sí lo actualiza.
+- En bases de datos anteriores a este campo se rellena con `updated_at` (aproximado: es lo más
+  cercano que se conocía).
 
 ### Fecha límite (`due_at`) y vencidos (`overdue`)
 
@@ -91,6 +98,7 @@ app/
   models.py        # Modelos Pydantic (Ticket, TicketCreate, TicketUpdate)
   db.py            # Conexión y operaciones SQLite (sqlite3)
   deadlines.py     # Cálculo puro de la fecha límite (due_at) según prioridad, hora de Madrid
+  timefmt.py       # Formato «hace 3 h» (puro)
   classifier.py    # ÚNICO módulo que llama al LLM
 
 templates/
@@ -145,6 +153,7 @@ Response `201`:
   "tags": ["login", "blank-screen"],
   "status": "open",
   "assignees": ["Ana", "Luis"],
+  "status_changed_at": "2026-06-29T09:30:00Z",
   "due_at": "2026-06-29T21:59:59Z",
   "overdue": false,
   "created_at": "2026-06-29T09:30:00Z",
@@ -267,6 +276,9 @@ Reglas de pantalla:
 - Los errores de validación se muestran en la propia página (la ruta HTML responde `200` con el
   aviso: HTMX no pinta los `4xx`).
 - Reabrir un ticket es elegir «Abierto» en el desplegable de estado de un ticket resuelto o cerrado.
+- Bajo el desplegable de estado de cada ticket se muestra desde cuándo está así, en hora de
+  Madrid y en relativo: «desde 05/11 14:20 · hace 3 h». El relativo usa «hace instantes»
+  (menos de 1 min), «hace N min», «hace N h» (menos de 24 h) y «hace N d».
 
 Recomendación:
 
@@ -291,6 +303,8 @@ Tests propios del equipo (además de los 5; cubren lo añadido en este SPEC):
 - Responsables: crear con varios, deduplicar sin distinguir mayúsculas, validar longitud y máximo,
   sustituir/vaciar con `PATCH`, filtrar por `assignee` y `unassigned`.
 - Estados: `resolved` válido, reabrir, y que `resolved`/`closed` no cuentan como vencidos.
+- «Desde cuándo»: `status_changed_at` al crear, solo cambia si cambia el estado, lo actualiza
+  reabrir, relleno en bases de datos antiguas y texto relativo en pantalla.
 - Fecha límite: cálculo por prioridad en hora de Madrid (incluido el cambio de horario),
   recálculo al cambiar la prioridad, reabrir no la reinicia, filtro `overdue`.
 - Frontend: rutas HTML, escapado de HTML en todos los campos de usuario y etiquetas en español.

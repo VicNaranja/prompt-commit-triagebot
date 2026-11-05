@@ -89,6 +89,7 @@ class Ticket(BaseModel):
     priority: Priority
     tags: list[str]
     status: Status
+    status_changed_at: datetime
     assignees: list[str]
     due_at: datetime
     overdue: bool

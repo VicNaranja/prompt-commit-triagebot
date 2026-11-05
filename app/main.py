@@ -24,6 +24,7 @@ from app.models import (
     TicketCreate,
     TicketUpdate,
 )
+from app.timefmt import format_ago
 
 load_dotenv()
 
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.filters["madrid"] = format_madrid
+templates.env.filters["ago"] = lambda value: format_ago(value, db._now())
 templates.env.globals.update(
     CATEGORIES=CATEGORIES,
     CATEGORY_LABELS=CATEGORY_LABELS,
