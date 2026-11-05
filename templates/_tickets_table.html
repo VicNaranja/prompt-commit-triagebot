@@ -9,6 +9,9 @@
   "feature_request": "bg-blue-100 text-blue-800",
   "question": "bg-slate-100 text-slate-700",
 } %}
+<datalist id="assignee-options" hx-swap-oob="true">
+  {% for name in assignee_names %}<option value="{{ name }}">{% endfor %}
+</datalist>
 {% if error %}
 <p role="alert" class="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">{{ error }}</p>
 {% endif %}
@@ -22,6 +25,7 @@
       <th class="px-3 py-2 text-left text-sm font-semibold">Prioridad</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Tags</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Responsables</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Creado</th>
     </tr>
   </thead>
@@ -67,11 +71,23 @@
           {% endfor %}
         </select>
       </td>
+      <td class="px-3 py-2 text-sm">
+        <input type="text" name="set_assignees"
+               value="{{ ticket.assignees | join(', ') }}"
+               placeholder="Sin asignar"
+               aria-label="Responsables del ticket {{ ticket.id }} (separados por comas)"
+               class="w-40 rounded border border-slate-300 bg-white px-2 py-0.5 text-xs"
+               hx-post="/ui/tickets/{{ ticket.id }}"
+               hx-trigger="change"
+               hx-include="#filters"
+               hx-target="#tickets-table"
+               hx-swap="innerHTML">
+      </td>
       <td class="px-3 py-2 text-sm text-slate-500">{{ ticket.created_at }}</td>
     </tr>
     {% else %}
     <tr>
-      <td colspan="7" class="px-3 py-6 text-center text-sm text-slate-500">No hay tickets que coincidan.</td>
+      <td colspan="8" class="px-3 py-6 text-center text-sm text-slate-500">No hay tickets que coincidan.</td>
     </tr>
     {% endfor %}
   </tbody>

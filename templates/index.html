@@ -31,6 +31,11 @@
           <textarea name="description" rows="3" maxlength="5000" required
                     class="rounded border border-slate-300 px-3 py-2 font-normal"></textarea>
         </label>
+        <label class="grid gap-1 text-sm font-medium">
+          Responsables <span class="font-normal text-slate-500">(opcional, separados por comas)</span>
+          <input type="text" name="assignees" placeholder="Ana, Luis"
+                 class="rounded border border-slate-300 px-3 py-2 font-normal">
+        </label>
         <div>
           <button type="submit"
                   class="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
@@ -74,6 +79,16 @@
           <option value="in_progress">in_progress</option>
           <option value="closed">closed</option>
         </select>
+      </label>
+      <label class="grid gap-1 text-sm font-medium">
+        Responsable
+        <input type="text" name="assignee" list="assignee-options" autocomplete="off"
+               placeholder="Todos"
+               class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
+      </label>
+      <label class="flex items-center gap-2 pb-2 text-sm font-medium">
+        <input type="checkbox" name="unassigned" value="true">
+        Sin asignar
       </label>
     </form>
 

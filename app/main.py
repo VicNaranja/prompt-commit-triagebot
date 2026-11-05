@@ -1,4 +1,5 @@
 import logging
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -107,23 +108,37 @@ def update_ticket(ticket_id: int, payload: TicketUpdate) -> dict[str, Any]:
 # Rutas HTML separadas de la API JSON: HTMX envía formularios, no JSON, y un 4xx no se pinta.
 
 
-def _render_table(
-    request: Request,
-    category: str | None = None,
-    priority: str | None = None,
-    status: str | None = None,
-    error: str | None = None,
-) -> HTMLResponse:
-    tickets = db.list_tickets(category=category, priority=priority, status=status)
-    return templates.TemplateResponse(
-        request, "_tickets_table.html", {"tickets": tickets, "error": error}
-    )
+@dataclass
+class Filters:
+    """Filtros activos del tablero. Se reenvían en cada petición HTMX para conservarlos."""
+
+    category: str | None = None
+    priority: str | None = None
+    status: str | None = None
+    assignee: str | None = None
+    unassigned: bool = False
+
+
+def _parse_names(raw: str | None) -> list[str] | None:
+    """Convierte «Ana, Luis» en ["Ana", "Luis"]. Campo ausente → None; vacío → []."""
+    if raw is None:
+        return None
+    return [name.strip() for name in raw.split(",") if name.strip()]
+
+
+def _board_context(tickets: list[dict[str, Any]], error: str | None = None) -> dict[str, Any]:
+    return {"tickets": tickets, "error": error, "assignee_names": db.list_assignee_names()}
+
+
+def _render_table(request: Request, filters: Filters, error: str | None = None) -> HTMLResponse:
+    tickets = db.list_tickets(**asdict(filters))
+    context = _board_context(tickets, error)
+    return templates.TemplateResponse(request, "_tickets_table.html", context)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    tickets = db.list_tickets()
-    return templates.TemplateResponse(request, "index.html", {"tickets": tickets, "error": None})
+    return templates.TemplateResponse(request, "index.html", _board_context(db.list_tickets()))
 
 
 @app.get("/ui/tickets", response_class=HTMLResponse)
@@ -132,8 +147,26 @@ def ui_list_tickets(
     category: str | None = None,
     priority: str | None = None,
     status: str | None = None,
+    assignee: str | None = None,
+    unassigned: bool = False,
 ) -> HTMLResponse:
-    return _render_table(request, category, priority, status)
+    return _render_table(request, Filters(category, priority, status, assignee, unassigned))
+
+
+def _create_error_message(error: ValidationError) -> str:
+    fields = {item["loc"][0] for item in error.errors() if item["loc"]}
+    messages = []
+    if fields & {"title", "description"}:
+        messages.append(
+            "El título (máx. 200, con al menos una letra o un número) y la descripción "
+            "(máx. 5000) no pueden estar vacíos."
+        )
+    if "assignees" in fields:
+        messages.append(
+            "Los responsables no pueden estar vacíos ni superar 60 caracteres, y como máximo "
+            "puede haber 10."
+        )
+    return " ".join(messages)
 
 
 @app.post("/ui/tickets", response_class=HTMLResponse)
@@ -141,21 +174,24 @@ def ui_create_ticket(
     request: Request,
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
+    assignees: Annotated[str, Form()] = "",
     category: Annotated[str | None, Form()] = None,
     priority: Annotated[str | None, Form()] = None,
     status: Annotated[str | None, Form()] = None,
+    assignee: Annotated[str | None, Form()] = None,
+    unassigned: Annotated[bool, Form()] = False,
 ) -> HTMLResponse:
-    # `category`, `priority` y `status` son los filtros activos del tablero, no datos del ticket.
+    # `category`, `priority`, `status`, `assignee` y `unassigned` son los filtros activos del
+    # tablero, no datos del ticket (el responsable del ticket va en `assignees`).
+    filters = Filters(category, priority, status, assignee, unassigned)
     try:
-        payload = TicketCreate(title=title, description=description)
-    except ValidationError:
-        error = (
-            "El título (máx. 200, con al menos una letra o un número) y la descripción "
-            "(máx. 5000) no pueden estar vacíos."
+        payload = TicketCreate(
+            title=title, description=description, assignees=_parse_names(assignees) or []
         )
-        return _render_table(request, category, priority, status, error=error)
+    except ValidationError as error:
+        return _render_table(request, filters, error=_create_error_message(error))
     _create_classified_ticket(payload)
-    return _render_table(request, category, priority, status)
+    return _render_table(request, filters)
 
 
 @app.post("/ui/tickets/{ticket_id}", response_class=HTMLResponse)
@@ -164,16 +200,33 @@ def ui_update_ticket(
     ticket_id: int,
     set_status: Annotated[str | None, Form()] = None,
     set_priority: Annotated[str | None, Form()] = None,
+    set_assignees: Annotated[str | None, Form()] = None,
     category: Annotated[str | None, Form()] = None,
     priority: Annotated[str | None, Form()] = None,
     status: Annotated[str | None, Form()] = None,
+    assignee: Annotated[str | None, Form()] = None,
+    unassigned: Annotated[bool, Form()] = False,
 ) -> HTMLResponse:
+    filters = Filters(category, priority, status, assignee, unassigned)
     error = None
     try:
-        update = TicketUpdate(status=set_status or None, priority=set_priority or None)
+        update = TicketUpdate(
+            status=set_status or None,
+            priority=set_priority or None,
+            assignees=_parse_names(set_assignees),
+        )
     except ValidationError:
-        error = "Valor de estado o prioridad no válido."
+        error = (
+            "Valor no válido: revisa estado, prioridad y responsables "
+            "(como máximo 10, de hasta 60 caracteres cada uno)."
+        )
     else:
-        if db.update_ticket(ticket_id, status=update.status, priority=update.priority) is None:
+        updated = db.update_ticket(
+            ticket_id,
+            status=update.status,
+            priority=update.priority,
+            assignees=update.assignees,
+        )
+        if updated is None:
             error = f"El ticket {ticket_id} no existe."
-    return _render_table(request, category, priority, status, error=error)
+    return _render_table(request, filters, error=error)
