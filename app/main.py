@@ -12,6 +12,7 @@ from pydantic import ValidationError
 # Se importa el módulo (no la función) para que los tests puedan sustituir
 # `app.classifier.classify_ticket`.
 from app import classifier, db
+from app.deadlines import format_madrid
 from app.models import (
     ALLOWED_CATEGORIES,
     ALLOWED_PRIORITIES,
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+templates.env.filters["madrid"] = format_madrid
 templates.env.globals.update(
     CATEGORIES=CATEGORIES,
     CATEGORY_LABELS=CATEGORY_LABELS,
@@ -91,6 +93,7 @@ def list_tickets(
     status: str | None = None,
     assignee: str | None = None,
     unassigned: bool = False,
+    overdue: bool | None = None,
 ) -> list[dict[str, Any]]:
     return db.list_tickets(
         category=category,
@@ -98,6 +101,7 @@ def list_tickets(
         status=status,
         assignee=assignee,
         unassigned=unassigned,
+        overdue=overdue,
     )
 
 
@@ -127,6 +131,7 @@ class Filters:
     status: str | None = None
     assignee: str | None = None
     unassigned: bool = False
+    overdue: bool = False  # casilla «Solo vencidos»: marcada = solo vencidos, sin marcar = todos
 
 
 def _parse_names(raw: str | None) -> list[str] | None:
@@ -141,7 +146,7 @@ def _board_context(tickets: list[dict[str, Any]], error: str | None = None) -> d
 
 
 def _render_table(request: Request, filters: Filters, error: str | None = None) -> HTMLResponse:
-    tickets = db.list_tickets(**asdict(filters))
+    tickets = db.list_tickets(**{**asdict(filters), "overdue": filters.overdue or None})
     context = _board_context(tickets, error)
     return templates.TemplateResponse(request, "_tickets_table.html", context)
 
@@ -159,8 +164,11 @@ def ui_list_tickets(
     status: str | None = None,
     assignee: str | None = None,
     unassigned: bool = False,
+    overdue: bool = False,
 ) -> HTMLResponse:
-    return _render_table(request, Filters(category, priority, status, assignee, unassigned))
+    return _render_table(
+        request, Filters(category, priority, status, assignee, unassigned, overdue)
+    )
 
 
 def _create_error_message(error: ValidationError) -> str:
@@ -190,10 +198,11 @@ def ui_create_ticket(
     status: Annotated[str | None, Form()] = None,
     assignee: Annotated[str | None, Form()] = None,
     unassigned: Annotated[bool, Form()] = False,
+    overdue: Annotated[bool, Form()] = False,
 ) -> HTMLResponse:
-    # `category`, `priority`, `status`, `assignee` y `unassigned` son los filtros activos del
-    # tablero, no datos del ticket (el responsable del ticket va en `assignees`).
-    filters = Filters(category, priority, status, assignee, unassigned)
+    # `category`, `priority`, `status`, `assignee`, `unassigned` y `overdue` son los filtros
+    # activos del tablero, no datos del ticket (el responsable del ticket va en `assignees`).
+    filters = Filters(category, priority, status, assignee, unassigned, overdue)
     try:
         payload = TicketCreate(
             title=title, description=description, assignees=_parse_names(assignees) or []
@@ -216,8 +225,9 @@ def ui_update_ticket(
     status: Annotated[str | None, Form()] = None,
     assignee: Annotated[str | None, Form()] = None,
     unassigned: Annotated[bool, Form()] = False,
+    overdue: Annotated[bool, Form()] = False,
 ) -> HTMLResponse:
-    filters = Filters(category, priority, status, assignee, unassigned)
+    filters = Filters(category, priority, status, assignee, unassigned, overdue)
     error = None
     try:
         update = TicketUpdate(

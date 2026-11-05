@@ -26,6 +26,7 @@
       <th class="px-3 py-2 text-left text-sm font-semibold">Tags</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Estado</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Responsables</th>
+      <th class="px-3 py-2 text-left text-sm font-semibold">Vence</th>
       <th class="px-3 py-2 text-left text-sm font-semibold">Creado</th>
     </tr>
   </thead>
@@ -83,11 +84,15 @@
                hx-target="#tickets-table"
                hx-swap="innerHTML">
       </td>
+      <td class="whitespace-nowrap px-3 py-2 text-sm">
+        {% if ticket.due_at %}<span class="text-slate-700">{{ ticket.due_at | madrid }}</span>{% endif %}
+        {% if ticket.overdue %}<span class="ml-1 rounded bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">Vencido</span>{% endif %}
+      </td>
       <td class="px-3 py-2 text-sm text-slate-500">{{ ticket.created_at }}</td>
     </tr>
     {% else %}
     <tr>
-      <td colspan="8" class="px-3 py-6 text-center text-sm text-slate-500">No hay tickets que coincidan.</td>
+      <td colspan="9" class="px-3 py-6 text-center text-sm text-slate-500">No hay tickets que coincidan.</td>
     </tr>
     {% endfor %}
   </tbody>

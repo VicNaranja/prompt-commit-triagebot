@@ -12,6 +12,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+from app.deadlines import compute_due_at
+
 DEFAULT_DATABASE_URL = "sqlite:///triagebot.db"
 _SQLITE_PREFIX = "sqlite:///"
 
@@ -24,6 +26,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     priority    TEXT NOT NULL,
     tags        TEXT NOT NULL DEFAULT '[]',
     status      TEXT NOT NULL DEFAULT 'open',
+    due_at      TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -47,13 +50,39 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# Un ticket está vencido si su fecha límite ya pasó y sigue sin resolverse. Se calcula al
+# consultar (no se guarda). Un `due_at` vacío (no debería ocurrir tras migrar) nunca vence.
+_UNRESOLVED_STATUSES = ("open", "in_progress")
+_OVERDUE_SQL = (
+    "(COALESCE(due_at, '9999-12-31T23:59:59Z') < ? AND status IN ("
+    + ", ".join(f"'{status}'" for status in _UNRESOLVED_STATUSES)
+    + "))"
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Pone al día una base de datos creada con una versión anterior del esquema."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(tickets)")}
+    if "due_at" not in columns:
+        conn.execute("ALTER TABLE tickets ADD COLUMN due_at TEXT")
+    pending = conn.execute(
+        "SELECT id, created_at, priority FROM tickets WHERE due_at IS NULL"
+    ).fetchall()
+    for row in pending:
+        conn.execute(
+            "UPDATE tickets SET due_at = ? WHERE id = ?",
+            (compute_due_at(row["created_at"], row["priority"]), row["id"]),
+        )
+
+
 @contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
-    """Abre una conexión por operación, crea las tablas si faltan y confirma al salir sin error."""
+    """Abre una conexión por operación, crea/migra las tablas y confirma al salir sin error."""
     conn = sqlite3.connect(_database_path())
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript(_SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:
@@ -86,11 +115,17 @@ def _rows_to_tickets(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[
             ids,
         ):
             assignees[found["ticket_id"]].append(found["name"])
+    now = _now()
     tickets = []
     for row in rows:
         ticket = dict(row)
         ticket["tags"] = json.loads(ticket["tags"])
         ticket["assignees"] = assignees[ticket["id"]]
+        ticket["overdue"] = (
+            ticket["due_at"] is not None
+            and ticket["due_at"] < now
+            and ticket["status"] in _UNRESOLVED_STATUSES
+        )
         tickets.append(ticket)
     return tickets
 
@@ -110,13 +145,14 @@ def create_ticket(
     with connect() as conn:
         cursor = conn.execute(
             "INSERT INTO tickets (title, description, category, priority, tags, status,"
-            " created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)",
+            " due_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)",
             (
                 title,
                 description,
                 classification["category"],
                 classification["priority"],
                 json.dumps(classification["tags"], ensure_ascii=False),
+                compute_due_at(now, classification["priority"]),
                 now,
                 now,
             ),
@@ -132,11 +168,13 @@ def list_tickets(
     status: str | None = None,
     assignee: str | None = None,
     unassigned: bool = False,
+    overdue: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Lista tickets, el más reciente primero (desempate por id descendente).
 
     Todos los filtros indicados se cumplen a la vez. `assignee` coincide con el nombre completo
-    de uno de los responsables, sin distinguir mayúsculas.
+    de uno de los responsables, sin distinguir mayúsculas. `overdue=True` deja solo los vencidos,
+    `overdue=False` solo los no vencidos y `None` no filtra.
     """
     filters = {"category": category, "priority": priority, "status": status}
     clauses = [f"{column} = ?" for column, value in filters.items() if value]
@@ -151,6 +189,9 @@ def list_tickets(
         clauses.append(
             "NOT EXISTS (SELECT 1 FROM ticket_assignees a WHERE a.ticket_id = tickets.id)"
         )
+    if overdue is not None:
+        clauses.append(_OVERDUE_SQL if overdue else f"NOT {_OVERDUE_SQL}")
+        params.append(_now())
     query = "SELECT * FROM tickets"
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
@@ -177,12 +218,20 @@ def update_ticket(
 ) -> dict[str, Any] | None:
     """Actualiza estado, prioridad y/o responsables. Devuelve None si el ticket no existe.
 
-    `assignees` sustituye la lista completa; `None` la deja como está y `[]` la vacía.
+    `assignees` sustituye la lista completa; `None` la deja como está y `[]` la vacía. Si cambia
+    la prioridad, `due_at` se recalcula desde `created_at` (no desde el momento del cambio).
     """
     changes = {"status": status, "priority": priority}
     active = {column: value for column, value in changes.items() if value}
-    assignments = ", ".join(f"{column} = ?" for column in [*active, "updated_at"])
     with connect() as conn:
+        if priority:
+            existing = conn.execute(
+                "SELECT created_at FROM tickets WHERE id = ?", (ticket_id,)
+            ).fetchone()
+            if existing is None:
+                return None
+            active["due_at"] = compute_due_at(existing["created_at"], priority)
+        assignments = ", ".join(f"{column} = ?" for column in [*active, "updated_at"])
         cursor = conn.execute(
             f"UPDATE tickets SET {assignments} WHERE id = ?",
             (*active.values(), _now(), ticket_id),
