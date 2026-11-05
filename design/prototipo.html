@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TriageBot · prototipo de diseño</title>
+
+  <!-- Tema antes de pintar: evita el parpadeo claro→oscuro al cargar. -->
+  <script>
+    (function () {
+      var mode = "auto";
+      try { mode = localStorage.getItem("triagebot-theme") || "auto"; } catch (e) {}
+      var dark = mode === "dark" || (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.dataset.theme = mode;
+    })();
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Todos los colores son tokens semánticos (variables CSS): el modo oscuro se define UNA vez
+    // abajo, y los componentes nunca llevan un color fijo.
+    const token = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: Object.fromEntries([
+            "bg", "surface", "surface2", "ink", "muted", "line", "field",
+            "accent", "accent-hover", "on-accent", "accent-soft-bg", "accent-soft-ink",
+            "info-bg", "info-ink", "neutral-bg", "neutral-ink", "ok-bg", "ok-ink",
+            "warn-bg", "warn-ink", "danger-bg", "danger-ink",
+          ].map((name) => [name, token(name)])),
+          fontFamily: {
+            serif: ["ui-serif", "Georgia", "Cambria", "Times New Roman", "serif"],
+            sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: 250 249 245;          --surface: 255 255 255;     --surface2: 246 244 238;
+      --ink: 20 20 19;            --muted: 94 93 89;
+      --line: 227 218 204;        --field: 143 138 125;
+      --accent: 176 80 48;        --accent-hover: 159 68 38;  --on-accent: 255 255 255;
+      --accent-soft-bg: 247 228 218;  --accent-soft-ink: 143 63 32;
+      --info-bg: 227 236 246;     --info-ink: 31 74 122;
+      --neutral-bg: 238 235 227;  --neutral-ink: 74 73 69;
+      --ok-bg: 228 239 225;       --ok-ink: 45 90 39;
+      --warn-bg: 246 232 200;     --warn-ink: 107 74 10;
+      --danger-bg: 251 228 222;   --danger-ink: 138 42 18;
+    }
+    .dark {
+      color-scheme: dark;
+      --bg: 38 38 36;             --surface: 48 48 46;        --surface2: 56 56 53;
+      --ink: 250 249 245;         --muted: 181 179 169;
+      --line: 74 73 69;           --field: 138 135 126;
+      --accent: 224 138 104;      --accent-hover: 232 156 126; --on-accent: 20 20 19;
+      --accent-soft-bg: 74 45 34;     --accent-soft-ink: 242 180 154;
+      --info-bg: 31 51 71;        --info-ink: 169 203 238;
+      --neutral-bg: 58 57 53;     --neutral-ink: 213 211 202;
+      --ok-bg: 37 64 42;          --ok-ink: 168 217 160;
+      --warn-bg: 74 58 20;        --warn-ink: 240 207 138;
+      --danger-bg: 74 38 32;      --danger-ink: 255 180 160;
+    }
+
+    /* Tabla → tarjetas en pantallas estrechas (sin scroll horizontal). */
+    @media (max-width: 1023px) {
+      table.tickets thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      table.tickets, table.tickets tbody, table.tickets tr, table.tickets td { display: block; }
+      table.tickets tr { padding: 1rem; border-bottom: 1px solid rgb(var(--line)); }
+      table.tickets tr:last-child { border-bottom: 0; }
+      table.tickets td { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: .5rem; align-items: start; padding: .35rem 0; }
+      table.tickets td::before { content: attr(data-label); color: rgb(var(--muted)); font-size: .75rem; padding-top: .3rem; }
+      table.tickets td .badge { justify-self: start; border-radius: .75rem; }
+      table.tickets td select, table.tickets td input { width: 100%; max-width: 16rem; }
+      table.tickets td[data-label="Ticket"] { display: block; padding-top: 0; }
+      table.tickets td[data-label="Ticket"]::before { content: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+  </style>
+
+  <style type="text/tailwindcss">
+    @layer components {
+      .card { @apply rounded-2xl border border-line bg-surface; }
+      .field { @apply w-full rounded-lg border border-field bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted; }
+      .field-sm { @apply rounded-lg border border-field bg-surface px-2 py-1 text-xs text-ink placeholder:text-muted; }
+      .focus-ring { @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent; }
+      .btn-primary { @apply focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover; }
+      .btn-ghost { @apply focus-ring inline-flex items-center justify-center gap-2 rounded-lg border border-field px-3 py-1.5 text-sm text-ink transition-colors hover:bg-surface2; }
+      .badge { @apply inline-flex max-w-full items-center rounded-full px-2.5 py-0.5 text-left text-xs font-medium lg:whitespace-nowrap; }
+      .badge-info { @apply bg-info-bg text-info-ink; }
+      .badge-neutral { @apply bg-neutral-bg text-neutral-ink; }
+      .badge-ok { @apply bg-ok-bg text-ok-ink; }
+      .badge-warn { @apply bg-warn-bg text-warn-ink; }
+      .badge-danger { @apply bg-danger-bg text-danger-ink; }
+      .badge-accent { @apply bg-accent-soft-bg text-accent-soft-ink; }
+      .th { @apply px-4 py-3 text-left text-xs font-medium text-muted; }
+      .td { @apply px-4 py-3 align-top text-sm; }
+    }
+  </style>
+</head>
+
+<body class="bg-bg font-sans text-ink antialiased">
+  <a href="#tickets" class="focus-ring sr-only rounded-lg bg-surface px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50">Saltar al listado de tickets</a>
+
+  <div class="bg-accent-soft-bg text-accent-soft-ink">
+    <p class="mx-auto max-w-7xl px-4 py-2 text-center text-xs sm:px-6">Prototipo de diseño · datos de ejemplo · nada de esta página se guarda</p>
+  </div>
+
+  <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+
+    <!-- Cabecera -->
+    <header class="flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 class="font-serif text-3xl tracking-tight sm:text-4xl">TriageBot</h1>
+        <p class="mt-2 max-w-prose text-muted">Tablero de incidencias con clasificación automática por IA.</p>
+      </div>
+
+      <div role="group" aria-label="Tema de color" class="inline-flex rounded-xl border border-line bg-surface p-1 text-sm">
+        <button type="button" data-mode="auto" aria-pressed="false" class="focus-ring inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-muted hover:text-ink aria-pressed:bg-surface2 aria-pressed:font-semibold aria-pressed:text-ink">
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3.5" width="15" height="10" rx="1.5"/><path d="M7 17h6M10 13.5V17"/></svg>Auto
+        </button>
+        <button type="button" data-mode="light" aria-pressed="false" class="focus-ring inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-muted hover:text-ink aria-pressed:bg-surface2 aria-pressed:font-semibold aria-pressed:text-ink">
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="3.2"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg>Claro
+        </button>
+        <button type="button" data-mode="dark" aria-pressed="false" class="focus-ring inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-muted hover:text-ink aria-pressed:bg-surface2 aria-pressed:font-semibold aria-pressed:text-ink">
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M16.5 11.5A6.5 6.5 0 0 1 8.5 3.5a6.5 6.5 0 1 0 8 8Z"/></svg>Oscuro
+        </button>
+      </div>
+    </header>
+
+    <!-- Nuevo ticket -->
+    <section class="card mt-8 p-5 sm:p-6" aria-labelledby="nuevo">
+      <h2 id="nuevo" class="font-serif text-xl">Nuevo ticket</h2>
+      <form class="mt-4 grid gap-4 md:grid-cols-2" onsubmit="return false">
+        <label class="grid gap-1.5 text-sm font-medium">
+          Título
+          <input type="text" class="field focus-ring font-normal" maxlength="200" placeholder="Qué ocurre, en una frase">
+        </label>
+        <label class="grid gap-1.5 text-sm font-medium">
+          <span>Responsables <span class="font-normal text-muted">(opcional, separados por comas)</span></span>
+          <input type="text" class="field focus-ring font-normal" placeholder="Ana, Luis">
+        </label>
+        <label class="grid gap-1.5 text-sm font-medium md:col-span-2">
+          Descripción
+          <textarea rows="3" class="field focus-ring font-normal" maxlength="5000" placeholder="Cuéntanos los detalles"></textarea>
+        </label>
+        <div class="flex items-center gap-3 md:col-span-2">
+          <button type="submit" class="btn-primary">Crear y clasificar</button>
+          <span class="text-sm text-muted">La IA propone categoría, prioridad y etiquetas.</span>
+        </div>
+      </form>
+    </section>
+
+    <!-- Filtros -->
+    <form class="mt-8 flex flex-wrap items-end gap-x-4 gap-y-3" aria-label="Filtros del tablero" onsubmit="return false">
+      <label class="grid gap-1 text-xs font-medium text-muted">Categoría
+        <select class="field focus-ring !w-auto min-w-[11rem] text-ink"><option>Todas</option><option>Error (bug)</option><option>Petición de mejora (feature_request)</option><option>Pregunta (question)</option><option>Urgente (urgent)</option></select>
+      </label>
+      <label class="grid gap-1 text-xs font-medium text-muted">Prioridad
+        <select class="field focus-ring !w-auto text-ink"><option>Todas</option><option>P1</option><option>P2</option><option>P3</option></select>
+      </label>
+      <label class="grid gap-1 text-xs font-medium text-muted">Estado
+        <select class="field focus-ring !w-auto min-w-[10rem] text-ink"><option>Todos</option><option>Abierto (open)</option><option>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select>
+      </label>
+      <label class="grid gap-1 text-xs font-medium text-muted">Responsable
+        <input type="text" class="field focus-ring !w-44 text-ink" placeholder="Todos" autocomplete="off">
+      </label>
+      <label class="flex items-center gap-2 pb-2 text-sm"><input type="checkbox" class="h-4 w-4 accent-accent focus-ring"> Sin asignar</label>
+      <label class="flex items-center gap-2 pb-2 text-sm"><input type="checkbox" class="h-4 w-4 accent-accent focus-ring"> Solo vencidos</label>
+      <button type="reset" class="btn-ghost ml-auto">Limpiar filtros</button>
+    </form>
+
+    <p class="mt-6 text-sm text-muted" aria-live="polite">Mostrando <strong class="font-semibold text-ink">1–8</strong> de <strong class="font-semibold text-ink">140</strong> tickets</p>
+
+    <!-- Tabla -->
+    <div id="tickets" class="card mt-3 overflow-hidden">
+      <table class="tickets w-full border-collapse">
+        <thead class="border-b border-line bg-surface2">
+          <tr>
+            <th scope="col" class="th lg:w-[36%]">Ticket</th>
+            <th scope="col" class="th">Categoría</th>
+            <th scope="col" class="th">Prioridad</th>
+            <th scope="col" class="th">Estado</th>
+            <th scope="col" class="th lg:w-[13.5rem]">Responsables</th>
+            <th scope="col" class="th">Vence</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-line">
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#13</span><span class="font-medium [overflow-wrap:anywhere]">Esto urge porque tenemos demo el viernes</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">El informe de ventas no se genera y lo necesitamos para una demo con un cliente el viernes.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">informe-ventas</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">generacion</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">demo</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 05/11 14:14</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-danger">Urgente (urgent)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 13" class="field-sm focus-ring font-semibold"><option selected>P1</option><option>P2</option><option>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 13" class="field-sm focus-ring"><option selected>Abierto (open)</option><option>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 05/11 14:14</span> · <span class="whitespace-nowrap">hace 5 min</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="Ana, Luis" aria-label="Responsables del ticket 13" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div>05/11 23:59</div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#3</span><span class="font-medium [overflow-wrap:anywhere]">La VPN rechaza a todo el equipo de teletrabajo</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Desde primera hora ninguno de los que trabajamos en remoto podemos conectarnos a la VPN corporativa.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">vpn</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">autenticacion</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 04/11 09:12</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-warn">Error (bug)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 3" class="field-sm focus-ring font-semibold"><option selected>P1</option><option>P2</option><option>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 3" class="field-sm focus-ring"><option>Abierto (open)</option><option selected>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 04/11 16:40</span> · <span class="whitespace-nowrap">hace 22 h</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="Ana" aria-label="Responsables del ticket 3" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div><span class="mr-1">04/11 23:59</span><span class="badge badge-danger">Vencido</span></div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#7</span><span class="font-medium [overflow-wrap:anywhere]">Los gráficos del dashboard de ventas aparecen en blanco</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Entro al panel de KPIs y las tarjetas con números cargan, pero los gráficos se quedan vacíos.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">dashboard</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">graficos</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">ventas</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 05/11 10:02</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-warn">Error (bug)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 7" class="field-sm focus-ring font-semibold"><option>P1</option><option selected>P2</option><option>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 7" class="field-sm focus-ring"><option selected>Abierto (open)</option><option>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 05/11 10:02</span> · <span class="whitespace-nowrap">hace 4 h</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="" placeholder="Sin asignar" aria-label="Responsables del ticket 7" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div>06/11 23:59</div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#8</span><span class="font-medium [overflow-wrap:anywhere]">Sería útil poder exportar los tickets a Excel</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Para hacer informes mensuales tendría que pasar los datos a una hoja de cálculo a mano.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">exportacion</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">excel</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 01/11 17:30</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-info">Petición de mejora (feature_request)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 8" class="field-sm focus-ring font-semibold"><option>P1</option><option>P2</option><option selected>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 8" class="field-sm focus-ring"><option>Abierto (open)</option><option>En curso (in_progress)</option><option selected>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 05/11 09:02</span> · <span class="whitespace-nowrap">hace 5 h</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="Luis" aria-label="Responsables del ticket 8" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div><span class="mr-1 text-muted">03/11 23:59</span><span class="badge badge-ok">Resuelto</span></div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#11</span><span class="font-medium [overflow-wrap:anywhere]">¿Dónde puedo descargar mi nómina del mes pasado?</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Necesito la nómina de mayo para un trámite del banco y no sé en qué aplicación está.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">nomina</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">portal</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 02/11 08:40</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-neutral">Pregunta (question)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 11" class="field-sm focus-ring font-semibold"><option>P1</option><option>P2</option><option selected>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 11" class="field-sm focus-ring"><option>Abierto (open)</option><option>En curso (in_progress)</option><option>Resuelto (resolved)</option><option selected>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 03/11 12:15</span> · <span class="whitespace-nowrap">hace 2 d</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="Eva" aria-label="Responsables del ticket 11" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap text-muted" data-label="Vence"><div>07/11 23:59</div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#9</span><span class="font-medium [overflow-wrap:anywhere]">Propuesta: histórico de versiones en los documentos compartidos</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Sería muy útil poder ver versiones anteriores de un documento compartido y recuperar una de ellas si alguien se equivoca.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">versiones</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">documentos</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">historico</li><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">recuperar</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 05/11 11:20</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-info">Petición de mejora (feature_request)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 9" class="field-sm focus-ring font-semibold"><option>P1</option><option>P2</option><option selected>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 9" class="field-sm focus-ring"><option selected>Abierto (open)</option><option>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 05/11 11:20</span> · <span class="whitespace-nowrap">hace 3 h</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="Ana, Luis, Eva, Marcos" aria-label="Responsables del ticket 9" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div>07/11 23:59</div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#21</span><span class="font-medium [overflow-wrap:anywhere]">Error en https://intranet.ejemplo.local/documentos/informes/informe_mensual_resumen_ejecutivo_final_v3_definitivo_revisado.pdf al abrir</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Al abrir https://intranet.ejemplo.local/documentos/informes/informe_mensual_resumen_ejecutivo_final_v3_definitivo_revisado.pdf el visor se queda cargando.</p>
+              <ul class="mt-1.5 flex flex-wrap gap-1"><li class="rounded bg-surface2 px-1.5 py-0.5 text-xs text-muted">visor-pdf</li></ul>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 05/11 13:05</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-warn">Error (bug)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 21" class="field-sm focus-ring font-semibold"><option>P1</option><option selected>P2</option><option>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 21" class="field-sm focus-ring"><option>Abierto (open)</option><option selected>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 05/11 13:05</span> · <span class="whitespace-nowrap">hace 1 h</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="Marcos" aria-label="Responsables del ticket 21" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div>06/11 23:59</div></td>
+            </tr>
+
+          <tr class="hover:bg-surface2/60">
+            <td class="td" data-label="Ticket">
+              <div class="flex items-baseline gap-2"><span class="text-xs tabular-nums text-muted">#22</span><span class="font-medium [overflow-wrap:anywhere]">&lt;script&gt;alert(1)&lt;/script&gt; en el campo título</span></div>
+              <p class="mt-0.5 line-clamp-2 text-muted [overflow-wrap:anywhere]">Prueba de escapado: el HTML debe verse como texto, no ejecutarse.</p>
+            
+              <p class="mt-1.5 text-xs text-muted">Creado 05/11 14:30</p>
+            </td>
+            <td class="td" data-label="Categoría"><span class="badge badge-neutral">Pregunta (question)</span></td>
+            <td class="td" data-label="Prioridad"><select aria-label="Prioridad del ticket 22" class="field-sm focus-ring font-semibold"><option>P1</option><option>P2</option><option selected>P3</option></select></td>
+            <td class="td" data-label="Estado"><div><select aria-label="Estado del ticket 22" class="field-sm focus-ring"><option selected>Abierto (open)</option><option>En curso (in_progress)</option><option>Resuelto (resolved)</option><option>Cerrado (closed)</option></select><p class="mt-1 text-xs text-muted"><span class="whitespace-nowrap">desde 05/11 14:30</span> · <span class="whitespace-nowrap">hace 1 min</span></p></div></td>
+            <td class="td" data-label="Responsables"><input type="text" value="" placeholder="Sin asignar" aria-label="Responsables del ticket 22" class="field-sm focus-ring w-full max-w-[13rem]"></td>
+            <td class="td whitespace-nowrap" data-label="Vence"><div>07/11 23:59</div></td>
+            </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Paginador -->
+    <nav aria-label="Paginación" class="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm">
+      <p class="text-muted">Página <strong class="font-semibold text-ink">1</strong> de 7</p>
+      <ul class="flex flex-wrap items-center gap-1">
+        <li><span class="btn-ghost cursor-not-allowed opacity-60" aria-disabled="true">← Anterior</span></li>
+        <li><a href="#" aria-current="page" class="focus-ring inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-accent px-2 font-semibold text-on-accent">1</a></li>
+        <li><a href="#" class="focus-ring inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2 hover:bg-surface2">2</a></li>
+        <li><a href="#" class="focus-ring inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2 hover:bg-surface2">3</a></li>
+        <li aria-hidden="true" class="px-1 text-muted">…</li>
+        <li><a href="#" class="focus-ring inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2 hover:bg-surface2">7</a></li>
+        <li><a href="#" class="btn-ghost">Siguiente →</a></li>
+      </ul>
+    </nav>
+
+    <!-- Guía de estados y componentes -->
+    <section class="mt-14" aria-labelledby="guia">
+      <h2 id="guia" class="font-serif text-2xl">Estados y componentes</h2>
+      <p class="mt-1 text-sm text-muted">Lo que no se ve en el listado principal, para revisarlo en claro y oscuro.</p>
+
+      <div class="mt-5 grid gap-4 md:grid-cols-2">
+        <div class="card p-5">
+          <h3 class="text-sm font-semibold">Avisos</h3>
+          <div class="mt-3 grid gap-3">
+            <p role="alert" class="rounded-lg border border-danger-ink/30 bg-danger-bg px-3 py-2 text-sm text-danger-ink">El título (máx. 200, con al menos una letra o un número) y la descripción (máx. 5000) no pueden estar vacíos.</p>
+            <p role="status" class="inline-flex w-fit items-center gap-2 rounded-lg border border-ok-ink/30 bg-ok-bg px-3 py-2 text-sm text-ok-ink"><svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="m4.5 10.5 3.5 3.5 7.5-8"/></svg>Guardado</p>
+            <p class="rounded-lg border border-warn-ink/30 bg-warn-bg px-3 py-2 text-sm text-warn-ink">Este ticket venció ayer a las 23:59.</p>
+          </div>
+        </div>
+
+        <div class="card p-5">
+          <h3 class="text-sm font-semibold">Insignias</h3>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span class="badge badge-danger">Urgente (urgent)</span>
+            <span class="badge badge-warn">Error (bug)</span>
+            <span class="badge badge-info">Petición de mejora (feature_request)</span>
+            <span class="badge badge-neutral">Pregunta (question)</span>
+            <span class="badge badge-ok">Resuelto</span>
+            <span class="badge badge-accent">Nuevo</span>
+            <span class="badge badge-danger">Vencido</span>
+          </div>
+          <h3 class="mt-5 text-sm font-semibold">Botones</h3>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" class="btn-primary">Crear y clasificar</button>
+            <button type="button" class="btn-ghost">Limpiar filtros</button>
+            <button type="button" class="btn-primary cursor-not-allowed opacity-50" disabled>Clasificando…</button>
+          </div>
+        </div>
+
+        <div class="card flex flex-col items-center gap-2 px-6 py-10 text-center md:col-span-2">
+          <svg aria-hidden="true" viewBox="0 0 24 24" class="h-8 w-8 text-muted" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z"/><path d="M4 13h4l1.5 2.5h5L16 13h4"/></svg>
+          <p class="font-serif text-lg">No hay tickets que coincidan</p>
+          <p class="max-w-md text-sm text-muted">Prueba a quitar algún filtro, o crea un ticket nuevo desde el formulario de arriba.</p>
+          <button type="button" class="btn-ghost mt-2">Limpiar filtros</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var query = window.matchMedia("(prefers-color-scheme: dark)");
+      function stored() { try { return localStorage.getItem("triagebot-theme") || "auto"; } catch (e) { return "auto"; } }
+      function apply(mode) {
+        var dark = mode === "dark" || (mode === "auto" && query.matches);
+        root.classList.toggle("dark", dark);
+        root.dataset.theme = mode;
+        document.querySelectorAll("[data-mode]").forEach(function (button) {
+          button.setAttribute("aria-pressed", String(button.dataset.mode === mode || (mode === "light" && button.dataset.mode === "light")));
+        });
+      }
+      document.querySelectorAll("[data-mode]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var mode = button.dataset.mode;
+          try { localStorage.setItem("triagebot-theme", mode); } catch (e) {}
+          apply(mode);
+        });
+      });
+      query.addEventListener("change", function () { if (stored() === "auto") apply("auto"); });
+      apply(stored());
+    })();
+  </script>
+</body>
+</html>

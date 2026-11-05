@@ -30,3 +30,6 @@ venv/
 
 # Logs
 *.log
+
+# Capturas que genera design/check_design.py
+design/capturas/
