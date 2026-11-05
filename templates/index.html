@@ -56,10 +56,9 @@
         Categoría
         <select name="category" class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
           <option value="">Todas</option>
-          <option value="bug">bug</option>
-          <option value="feature_request">feature_request</option>
-          <option value="question">question</option>
-          <option value="urgent">urgent</option>
+          {% for value in CATEGORIES %}
+          <option value="{{ value }}">{{ CATEGORY_LABELS[value] }}</option>
+          {% endfor %}
         </select>
       </label>
       <label class="grid gap-1 text-sm font-medium">
@@ -75,9 +74,9 @@
         Estado
         <select name="status" class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
           <option value="">Todos</option>
-          <option value="open">open</option>
-          <option value="in_progress">in_progress</option>
-          <option value="closed">closed</option>
+          {% for value in STATUSES %}
+          <option value="{{ value }}">{{ STATUS_LABELS[value] }}</option>
+          {% endfor %}
         </select>
       </label>
       <label class="grid gap-1 text-sm font-medium">

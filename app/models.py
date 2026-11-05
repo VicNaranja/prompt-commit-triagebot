@@ -7,11 +7,28 @@ from pydantic import AfterValidator, BaseModel, Field, StringConstraints, model_
 
 Category = Literal["bug", "feature_request", "question", "urgent"]
 Priority = Literal["P1", "P2", "P3"]
-Status = Literal["open", "in_progress", "closed"]
+Status = Literal["open", "in_progress", "resolved", "closed"]
 
 ALLOWED_CATEGORIES = set(get_args(Category))
 ALLOWED_PRIORITIES = set(get_args(Priority))
 ALLOWED_STATUSES = set(get_args(Status))
+
+# Orden de aparición en los desplegables (el de `Literal`) y etiquetas visibles en pantalla.
+# Los valores internos de la API no cambian; solo se traducen al mostrarlos.
+CATEGORIES = get_args(Category)
+STATUSES = get_args(Status)
+CATEGORY_LABELS = {
+    "bug": "Error",
+    "feature_request": "Petición de mejora",
+    "question": "Pregunta",
+    "urgent": "Urgente",
+}
+STATUS_LABELS = {
+    "open": "Abierto",
+    "in_progress": "En curso",
+    "resolved": "Resuelto",
+    "closed": "Cerrado",
+}
 
 MAX_ASSIGNEES = 10
 MAX_ASSIGNEE_LENGTH = 60

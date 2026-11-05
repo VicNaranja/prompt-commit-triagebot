@@ -38,7 +38,7 @@
         <div class="text-slate-500">{{ ticket.description | truncate(120) }}</div>
       </td>
       <td class="px-3 py-2 text-sm">
-        <span class="rounded px-2 py-0.5 text-xs font-semibold {{ category_styles.get(ticket.category, '') }}">{{ ticket.category }}</span>
+        <span class="rounded px-2 py-0.5 text-xs font-semibold {{ category_styles.get(ticket.category, '') }}">{{ CATEGORY_LABELS.get(ticket.category, ticket.category) }}</span>
       </td>
       <td class="px-3 py-2 text-sm">
         <select name="set_priority"
@@ -66,8 +66,8 @@
                 hx-include="#filters"
                 hx-target="#tickets-table"
                 hx-swap="innerHTML">
-          {% for value in ["open", "in_progress", "closed"] %}
-          <option value="{{ value }}" {% if value == ticket.status %}selected{% endif %}>{{ value }}</option>
+          {% for value in STATUSES %}
+          <option value="{{ value }}" {% if value == ticket.status %}selected{% endif %}>{{ STATUS_LABELS[value] }}</option>
           {% endfor %}
         </select>
       </td>

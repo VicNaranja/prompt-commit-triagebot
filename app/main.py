@@ -15,6 +15,10 @@ from app import classifier, db
 from app.models import (
     ALLOWED_CATEGORIES,
     ALLOWED_PRIORITIES,
+    CATEGORIES,
+    CATEGORY_LABELS,
+    STATUS_LABELS,
+    STATUSES,
     Ticket,
     TicketCreate,
     TicketUpdate,
@@ -26,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+templates.env.globals.update(
+    CATEGORIES=CATEGORIES,
+    CATEGORY_LABELS=CATEGORY_LABELS,
+    STATUSES=STATUSES,
+    STATUS_LABELS=STATUS_LABELS,
+)
 
 app = FastAPI(title="TriageBot")
 
