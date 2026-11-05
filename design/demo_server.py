@@ -10,6 +10,7 @@ con --app, pero también se puede usar a mano:
 import os
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -27,6 +28,8 @@ from app import classifier, db  # noqa: E402
 
 def fake_classify(title: str, description: str) -> dict:
     text = f"{title} {description}".lower()
+    if "lento" in text:
+        time.sleep(0.4)  # simula un LLM lento: fuerza que las peticiones se solapen
     if "urge" in text:
         return {"category": "urgent", "priority": "P1", "tags": ["demo"]}
     if "excel" in text or "propuesta" in text or "sería útil" in text:
@@ -79,6 +82,11 @@ make("El CRM se cierra solo al abrir una oportunidad grande", "Con muchas línea
      "la aplicación se cierra sin avisar.", days_ago=2.5, priority="P1")
 make("<script>alert(1)</script> en el campo título", "Prueba de escapado: el HTML debe verse "
      "como texto.")
+
+# Tickets antiguos de relleno (cerrados): con los 9 de arriba pasan de 20 y hay dos páginas.
+for number in range(1, 21):
+    make(f"Ticket archivado {number:02d}", "Ticket antiguo de relleno para probar la "
+         "paginación.", status="closed", days_ago=8 + number / 10)
 
 if __name__ == "__main__":
     uvicorn.run(app.main.app, host="127.0.0.1", port=PORT, log_level="warning")

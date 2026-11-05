@@ -2,9 +2,10 @@ import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -24,6 +25,7 @@ from app.models import (
     TicketCreate,
     TicketUpdate,
 )
+from app.pagination import PAGE_SIZE, clamp_page, last_page, page_window, parse_page
 from app.timefmt import format_ago
 
 load_dotenv()
@@ -90,21 +92,27 @@ def create_ticket(payload: TicketCreate) -> dict[str, Any]:
 
 @app.get("/tickets", response_model=list[Ticket])
 def list_tickets(
+    response: Response,
     category: str | None = None,
     priority: str | None = None,
     status: str | None = None,
     assignee: str | None = None,
     unassigned: bool = False,
     overdue: bool | None = None,
+    limit: Annotated[int | None, Query(ge=1, le=200)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[dict[str, Any]]:
-    return db.list_tickets(
-        category=category,
-        priority=priority,
-        status=status,
-        assignee=assignee,
-        unassigned=unassigned,
-        overdue=overdue,
-    )
+    """Lista de tickets. Sin `limit` devuelve todos; `X-Total-Count` trae el total filtrado."""
+    filters = {
+        "category": category,
+        "priority": priority,
+        "status": status,
+        "assignee": assignee,
+        "unassigned": unassigned,
+        "overdue": overdue,
+    }
+    response.headers["X-Total-Count"] = str(db.count_tickets(**filters))
+    return db.list_tickets(**filters, limit=limit, offset=offset)
 
 
 @app.patch("/tickets/{ticket_id}", response_model=Ticket)
@@ -143,36 +151,98 @@ def _parse_names(raw: str | None) -> list[str] | None:
     return [name.strip() for name in raw.split(",") if name.strip()]
 
 
-def _board_context(
-    tickets: list[dict[str, Any]], error: str | None = None, oob: bool = False
-) -> dict[str, Any]:
-    """`oob`: respuesta parcial de HTMX, que además refresca la lista de autocompletado."""
-    return {
+def _board_url(filters: Filters, page: int = 1) -> str:
+    """Dirección del tablero con sus filtros y página: `/`, `/?status=open&page=2`…"""
+    params: list[tuple[str, str]] = []
+    for name in ("category", "priority", "status", "assignee"):
+        value = getattr(filters, name)
+        if value:
+            params.append((name, value))
+    if filters.unassigned:
+        params.append(("unassigned", "true"))
+    if filters.overdue:
+        params.append(("overdue", "true"))
+    if page > 1:
+        params.append(("page", str(page)))
+    return f"/?{urlencode(params)}" if params else "/"
+
+
+def _board(
+    filters: Filters, requested_page: int, error: str | None = None, oob: bool = False
+) -> tuple[dict[str, Any], int]:
+    """Datos del tablero para la plantilla y la página realmente mostrada (ya corregida)."""
+    query = {**asdict(filters), "overdue": filters.overdue or None}
+    total = db.count_tickets(**query)
+    page = clamp_page(requested_page, total)
+    tickets = db.list_tickets(**query, limit=PAGE_SIZE, offset=(page - 1) * PAGE_SIZE)
+    pages = last_page(total)
+    first = (page - 1) * PAGE_SIZE + 1 if tickets else 0
+
+    def link(number: int, label: str | None = None) -> dict[str, Any]:
+        return {
+            "number": number,
+            "label": label or str(number),
+            "href": _board_url(filters, number),
+            "hx_get": f"/ui/tickets?page={number}",
+            "current": number == page,
+        }
+
+    context = {
         "tickets": tickets,
         "error": error,
         "assignee_names": db.list_assignee_names(),
         "oob": oob,
+        "filters": filters,
+        "page": page,
+        "pages": pages,
+        "total": total,
+        "range_start": first,
+        "range_end": first + len(tickets) - 1 if tickets else 0,
+        "page_links": [link(n) if n else None for n in page_window(page, pages)],
+        "previous": link(page - 1) if page > 1 else None,
+        "next": link(page + 1) if page < pages else None,
     }
+    return context, page
 
 
 def _render_table(
     request: Request,
     filters: Filters,
+    page: int = 1,
     error: str | None = None,
     trigger: str | None = None,
+    history: str = "replace",
 ) -> HTMLResponse:
-    """Pinta la tabla. `trigger` es un evento HTMX (cabecera `HX-Trigger`) para el formulario."""
-    tickets = db.list_tickets(**{**asdict(filters), "overdue": filters.overdue or None})
-    context = _board_context(tickets, error, oob=True)
+    """Pinta la tabla (respuesta parcial de HTMX).
+
+    `trigger` es un evento para el formulario (cabecera `HX-Trigger`). La dirección del navegador
+    se actualiza con la cabecera `HX-Push-Url` (nueva entrada del historial: filtrar o paginar)
+    o `HX-Replace-Url` (sin entrada nueva: editar o crear).
+    """
+    context, shown_page = _board(filters, page, error, oob=True)
     response = templates.TemplateResponse(request, "_tickets_table.html", context)
+    header = "HX-Push-Url" if history == "push" else "HX-Replace-Url"
+    response.headers[header] = _board_url(filters, shown_page)
     if trigger:
         response.headers["HX-Trigger"] = trigger
     return response
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(request, "index.html", _board_context(db.list_tickets()))
+def index(
+    request: Request,
+    category: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    assignee: str | None = None,
+    unassigned: bool = False,
+    overdue: bool = False,
+    page: str | None = None,
+) -> HTMLResponse:
+    """Tablero completo. Acepta los filtros y la página en la URL: `/?status=open&page=2`."""
+    filters = Filters(category, priority, status, assignee, unassigned, overdue)
+    context, _ = _board(filters, parse_page(page))
+    return templates.TemplateResponse(request, "index.html", context)
 
 
 @app.get("/ui/tickets", response_class=HTMLResponse)
@@ -184,10 +254,10 @@ def ui_list_tickets(
     assignee: str | None = None,
     unassigned: bool = False,
     overdue: bool = False,
+    page: str | None = None,
 ) -> HTMLResponse:
-    return _render_table(
-        request, Filters(category, priority, status, assignee, unassigned, overdue)
-    )
+    filters = Filters(category, priority, status, assignee, unassigned, overdue)
+    return _render_table(request, filters, parse_page(page), history="push")
 
 
 def _create_error_message(error: ValidationError) -> str:
@@ -195,7 +265,7 @@ def _create_error_message(error: ValidationError) -> str:
     messages = []
     if fields & {"title", "description"}:
         messages.append(
-            "El título (máx. 200, con al menos una letra o un número) y la descripción "
+            "El título (máx. 200, con al menos una letra, un número o un emoji) y la descripción "
             "(máx. 5000) no pueden estar vacíos."
         )
     if "assignees" in fields:
@@ -221,6 +291,7 @@ def ui_create_ticket(
 ) -> HTMLResponse:
     # `category`, `priority`, `status`, `assignee`, `unassigned` y `overdue` son los filtros
     # activos del tablero, no datos del ticket (el responsable del ticket va en `assignees`).
+    # Al crear se vuelve a la página 1, donde aparece el ticket más reciente.
     filters = Filters(category, priority, status, assignee, unassigned, overdue)
     try:
         payload = TicketCreate(
@@ -246,7 +317,9 @@ def ui_update_ticket(
     assignee: Annotated[str | None, Form()] = None,
     unassigned: Annotated[bool, Form()] = False,
     overdue: Annotated[bool, Form()] = False,
+    page: Annotated[str | None, Form()] = None,
 ) -> HTMLResponse:
+    # `page` es la página que está viendo el usuario: se mantiene al editar desde la fila.
     filters = Filters(category, priority, status, assignee, unassigned, overdue)
     error = None
     try:
@@ -269,4 +342,4 @@ def ui_update_ticket(
         )
         if updated is None:
             error = f"El ticket {ticket_id} no existe."
-    return _render_table(request, filters, error=error)
+    return _render_table(request, filters, parse_page(page), error=error)

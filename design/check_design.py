@@ -209,6 +209,13 @@ def interactions(browser, base_url: str, fail, report: list[str]) -> None:
             def count(page=page):
                 return page.locator(ROWS).count()
 
+            def summary(page=page):
+                return " ".join(page.locator("#tickets-table p.mb-3").first.inner_text().split())
+
+            def grand_total(page=page):
+                match = re.search(r"de (\d+) tickets|Mostrando (\d+) tickets?", summary())
+                return int(match.group(1) or match.group(2)) if match else -1
+
             def values_of(selector, page=page):
                 return page.locator(selector).evaluate_all("els => els.map(e => e.value)")
 
@@ -221,13 +228,63 @@ def interactions(browser, base_url: str, fail, report: list[str]) -> None:
                         fail(f"[{label} · {step}] ha desaparecido «{selector}» (¿se sustituyó más que la tabla?)")
 
             total = count()
-            if total < 9:
-                fail(f"[{label}] se esperaban 9 tickets de demo y hay {total}")
+            if total != 20:
+                fail(f"[{label}] la primera página debía tener 20 filas y tiene {total}")
             captions = page.locator(ROWS + " td[data-label=Estado] p").all_inner_texts()
             bad = [c for c in captions if not re.fullmatch(r"desde \d\d/\d\d \d\d:\d\d · hace .+", c.strip())]
             if len(captions) != total or bad:
                 fail(f"[{label} · inicio] «desde cuándo» ausente o mal formado: {bad[:2]} ({len(captions)}/{total})")
             measured += audit_dom(page, label, "inicio", fail)
+
+            # Paginación: resumen, pager, navegación sin recargar, URL, refresco y volver atrás
+            n = grand_total()  # la demo se comparte entre contextos: el total va creciendo
+            if not 21 <= n <= 40 or summary() != f"Mostrando 1–20 de {n} tickets":
+                fail(f"[{label} · paginación] resumen inicial: «{summary()}» (total {n})")
+            if page.locator("nav[aria-label=Paginación] [aria-current=page]").inner_text() != "1":
+                fail(f"[{label} · paginación] la página actual no está marcada")
+            measured += audit_dom(page, label, "paginador", fail)
+            page.click("nav[aria-label=Paginación] a[aria-label='Página siguiente']")
+            settle()
+            check_no_reload("página siguiente")
+            if summary() != f"Mostrando 21–{n} de {n} tickets" or count() != n - 20:
+                fail(f"[{label} · página 2] «{summary()}», {count()} filas (total {n})")
+            if "page=2" not in page.url:
+                fail(f"[{label} · página 2] la URL no refleja la página: {page.url}")
+            if "aria-disabled" not in page.locator("nav[aria-label=Paginación]").inner_html():
+                fail(f"[{label} · página 2] «Siguiente» debía estar desactivado en la última")
+            measured += audit_dom(page, label, "página 2", fail)
+            page.reload(wait_until="networkidle")
+            if summary() != f"Mostrando 21–{n} de {n} tickets":
+                fail(f"[{label} · refrescar] se perdió la página: «{summary()}»")
+            page.evaluate("window.__marker = 'sin-recarga'")
+            # Editar una fila no saca al usuario de su página
+            page.locator(STATUSES).first.select_option("in_progress")
+            settle()
+            check_no_reload("editar en la página 2")
+            if summary() != f"Mostrando 21–{n} de {n} tickets":
+                fail(f"[{label} · editar en la página 2] cambió de página: «{summary()}»")
+            # Filtrar vuelve a la página 1, queda en la URL y sobrevive al refresco
+            page.select_option("#filters select[name=status]", "closed")
+            settle()
+            check_no_reload("filtrar desde la página 2")
+            if "page=" in page.url or "status=closed" not in page.url:
+                fail(f"[{label} · filtrar] URL inesperada: {page.url}")
+            if not re.fullmatch(r"Mostrando (1–\d+ de \d+|\d+) tickets?", summary()):
+                fail(f"[{label} · filtrar] no volvió a la página 1: «{summary()}»")
+            page.reload(wait_until="networkidle")
+            if page.input_value("#filters select[name=status]") != "closed":
+                fail(f"[{label} · refrescar] el filtro de estado no sobrevive al refresco")
+            if not re.fullmatch(r"Mostrando (1–\d+ de \d+|\d+) tickets?", summary()):
+                fail(f"[{label} · refrescar] «{summary()}»")
+            measured += audit_dom(page, label, "filtro recordado", fail)
+            # «Limpiar filtros» vuelve al tablero sin filtros
+            page.click("text=Limpiar filtros")
+            page.wait_for_load_state("networkidle")
+            if "?" in page.url or page.input_value("#filters select[name=status]") != "":
+                fail(f"[{label} · limpiar] queda estado en la URL o el filtro: {page.url}")
+            if summary() != f"Mostrando 1–20 de {n} tickets":
+                fail(f"[{label} · limpiar] «{summary()}»")
+            page.evaluate("window.__marker = 'sin-recarga'")
 
             # Filtro por estado
             page.select_option("#filters select[name=status]", "in_progress")
@@ -289,21 +346,36 @@ def interactions(browser, base_url: str, fail, report: list[str]) -> None:
             measured += audit_dom(page, label, "alta inválida", fail)
 
             # Alta valida: aparece arriba, el formulario se vacia
-            before = count()
+            before = grand_total()
             page.fill("#create-form input[name=title]", "Ticket creado en la prueba del navegador")
             page.fill("#create-form textarea[name=description]", "Descripción de la prueba")
             page.fill("#create-form input[name=assignees]", "Ana, Luis")
             page.click("#create-form button[type=submit]")
             settle()
             first_title = page.locator(ROWS + " td[data-label=Ticket] .font-medium").first.inner_text()
-            if count() != before + 1 or first_title != "Ticket creado en la prueba del navegador":
-                fail(f"[{label} · alta válida] filas {before}→{count()}, primera: «{first_title}»")
+            if grand_total() != before + 1 or first_title != "Ticket creado en la prueba del navegador":
+                fail(f"[{label} · alta válida] total {before}→{grand_total()}, primera: «{first_title}»")
             if page.input_value("#create-form input[name=title]") != "":
                 fail(f"[{label} · alta válida] el formulario no se vació tras crear")
             if page.locator(ASSIGNEES).first.input_value() != "Ana, Luis":
                 fail(f"[{label} · alta válida] los responsables no se guardaron")
             check_no_reload("alta válida")
             measured += audit_dom(page, label, "alta válida", fail)
+
+            # Doble clic con un «LLM» lento (0,4 s): el botón se desactiva y solo se crea uno
+            before = grand_total()
+            page.fill("#create-form input[name=title]", "Ticket lento con doble clic")
+            page.fill("#create-form textarea[name=description]", "Descripción de la prueba")
+            page.dblclick("#create-form button[type=submit]")
+            page.wait_for_timeout(150)
+            if not page.locator("#create-form button[type=submit]").is_disabled():
+                fail(f"[{label} · doble clic] el botón no se desactiva mientras se envía")
+            page.wait_for_timeout(900)
+            settle()
+            if page.locator("#create-form button[type=submit]").is_disabled():
+                fail(f"[{label} · doble clic] el botón se quedó desactivado tras terminar")
+            if grand_total() != before + 1:
+                fail(f"[{label} · doble clic] el total pasó de {before} a {grand_total()} (debía ser +1)")
 
             # Editar estado desde la fila
             page.locator(STATUSES).first.select_option("resolved")

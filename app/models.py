@@ -1,5 +1,6 @@
 """Modelos Pydantic y valores permitidos del dominio."""
 
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Literal, get_args
 
@@ -34,16 +35,22 @@ MAX_ASSIGNEES = 10
 MAX_ASSIGNEE_LENGTH = 60
 
 
-def _require_alphanumeric(value: str) -> str:
-    if not any(char.isalnum() for char in value):
-        raise ValueError("El título debe contener al menos una letra o un número.")
+def _has_meaning(char: str) -> bool:
+    """Letra o número de cualquier alfabeto (日本語, العربية…), o emoji (categoría Unicode «So»)."""
+    return char.isalnum() or unicodedata.category(char) == "So"
+
+
+def _require_meaningful(value: str) -> str:
+    """Un título hecho solo de signos de puntuación o símbolos sueltos («!!!», «+++») no vale."""
+    if not any(_has_meaning(char) for char in value):
+        raise ValueError("El título debe contener al menos una letra, un número o un emoji.")
     return value
 
 
 Title = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
-    AfterValidator(_require_alphanumeric),
+    AfterValidator(_require_meaningful),
 ]
 Description = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)

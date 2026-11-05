@@ -42,6 +42,7 @@
             hx-include="#filters"
             hx-target="#tickets-table"
             hx-swap="innerHTML"
+            hx-disabled-elt="find button[type=submit]"
             hx-on:ticket-created="this.reset()">
         <label class="grid gap-1.5 text-sm font-medium">
           Título
@@ -76,7 +77,7 @@
         <select name="category" class="field focus-ring !w-auto min-w-[11rem] text-ink">
           <option value="">Todas</option>
           {% for value in CATEGORIES %}
-          <option value="{{ value }}">{{ CATEGORY_LABELS[value] }} ({{ value }})</option>
+          <option value="{{ value }}"{% if filters.category == value %} selected{% endif %}>{{ CATEGORY_LABELS[value] }} ({{ value }})</option>
           {% endfor %}
         </select>
       </label>
@@ -84,9 +85,9 @@
         Prioridad
         <select name="priority" class="field focus-ring !w-auto text-ink">
           <option value="">Todas</option>
-          <option value="P1">P1</option>
-          <option value="P2">P2</option>
-          <option value="P3">P3</option>
+          {% for value in ["P1", "P2", "P3"] %}
+          <option value="{{ value }}"{% if filters.priority == value %} selected{% endif %}>{{ value }}</option>
+          {% endfor %}
         </select>
       </label>
       <label class="grid gap-1 text-xs font-medium text-muted">
@@ -94,13 +95,14 @@
         <select name="status" class="field focus-ring !w-auto min-w-[10rem] text-ink">
           <option value="">Todos</option>
           {% for value in STATUSES %}
-          <option value="{{ value }}">{{ STATUS_LABELS[value] }} ({{ value }})</option>
+          <option value="{{ value }}"{% if filters.status == value %} selected{% endif %}>{{ STATUS_LABELS[value] }} ({{ value }})</option>
           {% endfor %}
         </select>
       </label>
       <label class="grid gap-1 text-xs font-medium text-muted">
         Responsable
         <input type="text" name="assignee" list="assignee-options" autocomplete="off"
+               value="{{ filters.assignee or '' }}"
                placeholder="Todos" class="field focus-ring !w-44 text-ink">
         {# Fuera de #tickets-table: si no, HTMX la borraría al repintar la tabla. Cada respuesta
            parcial trae otra copia con hx-swap-oob que la actualiza. #}
@@ -109,15 +111,18 @@
         </datalist>
       </label>
       <label class="flex items-center gap-2 pb-2 text-sm">
-        <input type="checkbox" name="unassigned" value="true" class="focus-ring h-4 w-4 accent-accent">
+        <input type="checkbox" name="unassigned" value="true" {% if filters.unassigned %}checked{% endif %} class="focus-ring h-4 w-4 accent-accent">
         Sin asignar
       </label>
       <label class="flex items-center gap-2 pb-2 text-sm">
-        <input type="checkbox" name="overdue" value="true" class="focus-ring h-4 w-4 accent-accent">
+        <input type="checkbox" name="overdue" value="true" {% if filters.overdue %}checked{% endif %} class="focus-ring h-4 w-4 accent-accent">
         Solo vencidos
       </label>
       <a href="/" class="btn-ghost ml-auto">Limpiar filtros</a>
     </form>
+    {# Página que se está viendo. Va fuera de #filters (cambiar un filtro vuelve a la 1) y de
+       #tickets-table (HTMX lo repinta); cada respuesta parcial trae otra copia con hx-swap-oob. #}
+    <input type="hidden" id="page-state" name="page" value="{{ page }}">
 
     <div id="tickets-table" class="mt-6" aria-live="polite">
       {% include "_tickets_table.html" %}

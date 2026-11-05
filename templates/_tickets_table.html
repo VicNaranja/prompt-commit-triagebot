@@ -4,17 +4,21 @@
   "feature_request": "badge-info",
   "question": "badge-neutral",
 } %}
-{% set priority_count = tickets | length %}
 {% if oob %}
 <datalist id="assignee-options" hx-swap-oob="true">
   {% for name in assignee_names %}<option value="{{ name }}">{% endfor %}
 </datalist>
+<input type="hidden" id="page-state" name="page" value="{{ page }}" hx-swap-oob="true">
 {% endif %}
 {% if error %}
 <p role="alert" class="mb-4 rounded-lg border border-danger-ink/30 bg-danger-bg px-3 py-2 text-sm text-danger-ink">{{ error }}</p>
 {% endif %}
 <p class="mb-3 text-sm text-muted">
-  Mostrando <strong class="font-semibold text-ink">{{ priority_count }}</strong> {{ "ticket" if priority_count == 1 else "tickets" }}
+  {% if pages > 1 %}
+  Mostrando <strong class="font-semibold text-ink">{{ range_start }}–{{ range_end }}</strong> de <strong class="font-semibold text-ink">{{ total }}</strong> tickets
+  {% else %}
+  Mostrando <strong class="font-semibold text-ink">{{ total }}</strong> {{ "ticket" if total == 1 else "tickets" }}
+  {% endif %}
 </p>
 {% if tickets %}
 <div class="card overflow-hidden">
@@ -53,7 +57,7 @@
                   aria-label="Prioridad del ticket {{ ticket.id }}"
                   class="field-sm focus-ring font-semibold"
                   hx-post="/ui/tickets/{{ ticket.id }}"
-                  hx-include="#filters"
+                  hx-include="#filters, #page-state"
                   hx-target="#tickets-table"
                   hx-swap="innerHTML">
             {% for value in ["P1", "P2", "P3"] %}
@@ -67,7 +71,7 @@
                     aria-label="Estado del ticket {{ ticket.id }}"
                     class="field-sm focus-ring"
                     hx-post="/ui/tickets/{{ ticket.id }}"
-                    hx-include="#filters"
+                    hx-include="#filters, #page-state"
                     hx-target="#tickets-table"
                     hx-swap="innerHTML">
               {% for value in STATUSES %}
@@ -85,7 +89,7 @@
                  class="field-sm focus-ring w-full min-w-[9.5rem] max-w-[13rem]"
                  hx-post="/ui/tickets/{{ ticket.id }}"
                  hx-trigger="change"
-                 hx-include="#filters"
+                 hx-include="#filters, #page-state"
                  hx-target="#tickets-table"
                  hx-swap="innerHTML">
         </td>
@@ -100,6 +104,28 @@
     </tbody>
   </table>
 </div>
+{% if pages > 1 %}
+<nav aria-label="Paginación" class="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm">
+  <p class="text-muted">Página <strong class="font-semibold text-ink">{{ page }}</strong> de {{ pages }}</p>
+  <ul class="flex flex-wrap items-center gap-1">
+    <li>
+      {% if previous %}<a href="{{ previous.href }}" hx-get="{{ previous.hx_get }}" hx-include="#filters" hx-target="#tickets-table" hx-swap="innerHTML show:#tickets-table:top" aria-label="Página anterior" class="btn-ghost">← Anterior</a>{% else %}<span class="btn-ghost cursor-not-allowed opacity-60" aria-disabled="true">← Anterior</span>{% endif %}
+    </li>
+    {% for item in page_links %}
+    {% if item %}
+    <li>
+      <a href="{{ item.href }}" hx-get="{{ item.hx_get }}" hx-include="#filters" hx-target="#tickets-table" hx-swap="innerHTML show:#tickets-table:top" aria-label="Ir a la página {{ item.number }}" {% if item.current %}aria-current="page" class="focus-ring inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-accent px-2 font-semibold text-on-accent"{% else %}class="focus-ring inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2 hover:bg-surface2"{% endif %}>{{ item.label }}</a>
+    </li>
+    {% else %}
+    <li aria-hidden="true" class="px-1 text-muted">…</li>
+    {% endif %}
+    {% endfor %}
+    <li>
+      {% if next %}<a href="{{ next.href }}" hx-get="{{ next.hx_get }}" hx-include="#filters" hx-target="#tickets-table" hx-swap="innerHTML show:#tickets-table:top" aria-label="Página siguiente" class="btn-ghost">Siguiente →</a>{% else %}<span class="btn-ghost cursor-not-allowed opacity-60" aria-disabled="true">Siguiente →</span>{% endif %}
+    </li>
+  </ul>
+</nav>
+{% endif %}
 {% else %}
 <div class="card flex flex-col items-center gap-2 px-6 py-10 text-center">
   <svg aria-hidden="true" viewBox="0 0 24 24" class="h-8 w-8 text-muted" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z"/><path d="M4 13h4l1.5 2.5h5L16 13h4"/></svg>

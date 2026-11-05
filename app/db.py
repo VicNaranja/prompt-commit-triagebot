@@ -15,6 +15,7 @@ from typing import Any
 from app.deadlines import compute_due_at
 
 DEFAULT_DATABASE_URL = "sqlite:///triagebot.db"
+_MAX_ID = 2**63 - 1  # el mayor entero que admite una columna INTEGER de SQLite
 _SQLITE_PREFIX = "sqlite:///"
 
 _SCHEMA = """
@@ -171,20 +172,15 @@ def create_ticket(
         return _get_ticket(conn, ticket_id)
 
 
-def list_tickets(
-    category: str | None = None,
-    priority: str | None = None,
-    status: str | None = None,
-    assignee: str | None = None,
-    unassigned: bool = False,
-    overdue: bool | None = None,
-) -> list[dict[str, Any]]:
-    """Lista tickets, el más reciente primero (desempate por id descendente).
-
-    Todos los filtros indicados se cumplen a la vez. `assignee` coincide con el nombre completo
-    de uno de los responsables, sin distinguir mayúsculas. `overdue=True` deja solo los vencidos,
-    `overdue=False` solo los no vencidos y `None` no filtra.
-    """
+def _where(
+    category: str | None,
+    priority: str | None,
+    status: str | None,
+    assignee: str | None,
+    unassigned: bool,
+    overdue: bool | None,
+) -> tuple[str, list[Any]]:
+    """Cláusula WHERE (con su «WHERE») y parámetros: la misma para listar y para contar."""
     filters = {"category": category, "priority": priority, "status": status}
     clauses = [f"{column} = ?" for column, value in filters.items() if value]
     params: list[Any] = [value for value in filters.values() if value]
@@ -201,10 +197,46 @@ def list_tickets(
     if overdue is not None:
         clauses.append(_OVERDUE_SQL if overdue else f"NOT {_OVERDUE_SQL}")
         params.append(_now())
-    query = "SELECT * FROM tickets"
-    if clauses:
-        query += " WHERE " + " AND ".join(clauses)
-    query += " ORDER BY created_at DESC, id DESC"
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+def count_tickets(
+    category: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    assignee: str | None = None,
+    unassigned: bool = False,
+    overdue: bool | None = None,
+) -> int:
+    """Cuántos tickets cumplen los filtros (mismos parámetros que `list_tickets`)."""
+    where, params = _where(category, priority, status, assignee, unassigned, overdue)
+    with connect() as conn:
+        return conn.execute(f"SELECT COUNT(*) FROM tickets{where}", params).fetchone()[0]
+
+
+def list_tickets(
+    category: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    assignee: str | None = None,
+    unassigned: bool = False,
+    overdue: bool | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Lista tickets, el más reciente primero (desempate por id descendente).
+
+    Todos los filtros indicados se cumplen a la vez. `assignee` coincide con el nombre completo
+    de uno de los responsables, sin distinguir mayúsculas. `overdue=True` deja solo los vencidos,
+    `overdue=False` solo los no vencidos y `None` no filtra. `limit` y `offset` paginan; sin
+    `limit` se devuelven todos (desde `offset`).
+    """
+    where, params = _where(category, priority, status, assignee, unassigned, overdue)
+    query = f"SELECT * FROM tickets{where} ORDER BY created_at DESC, id DESC"
+    if limit is not None or offset:
+        # SQLite exige LIMIT para usar OFFSET; -1 significa «sin límite».
+        query += " LIMIT ? OFFSET ?"
+        params = [*params, -1 if limit is None else limit, offset]
     with connect() as conn:
         rows = conn.execute(query, params).fetchall()
         return _rows_to_tickets(conn, rows)
@@ -231,6 +263,8 @@ def update_ticket(
     la prioridad, `due_at` se recalcula desde `created_at` (no desde el momento del cambio).
     `status_changed_at` solo se actualiza si el estado cambia de verdad.
     """
+    if not 1 <= ticket_id <= _MAX_ID:
+        return None  # un id fuera del rango de SQLite (p. ej. 99999999999999999999) no existe
     changes = {"status": status, "priority": priority}
     active = {column: value for column, value in changes.items() if value}
     now = _now()
