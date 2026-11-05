@@ -134,7 +134,10 @@ def ui_create_ticket(
     try:
         payload = TicketCreate(title=title, description=description)
     except ValidationError:
-        error = "El título (máx. 200) y la descripción (máx. 5000) no pueden estar vacíos."
+        error = (
+            "El título (máx. 200, con al menos una letra o un número) y la descripción "
+            "(máx. 5000) no pueden estar vacíos."
+        )
         return _render_table(request, category, priority, status, error=error)
     _create_classified_ticket(payload)
     return _render_table(request, category, priority, status)

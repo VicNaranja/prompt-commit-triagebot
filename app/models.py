@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Literal, get_args
 
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, StringConstraints, model_validator
 
 Category = Literal["bug", "feature_request", "question", "urgent"]
 Priority = Literal["P1", "P2", "P3"]
@@ -13,7 +13,17 @@ ALLOWED_CATEGORIES = set(get_args(Category))
 ALLOWED_PRIORITIES = set(get_args(Priority))
 ALLOWED_STATUSES = set(get_args(Status))
 
-Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+def _require_alphanumeric(value: str) -> str:
+    if not any(char.isalnum() for char in value):
+        raise ValueError("El título debe contener al menos una letra o un número.")
+    return value
+
+
+Title = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+    AfterValidator(_require_alphanumeric),
+]
 Description = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)
 ]
