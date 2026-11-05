@@ -6,6 +6,12 @@ requirements.txt. Uso (desde la raíz del repo, con el venv activado):
 
     pip install playwright
     python design/check_design.py [ruta.html | URL] [carpeta_de_capturas]
+    python design/check_design.py --app [carpeta_de_capturas]   # la app real, con HTMX
+
+Con --app arranca design/demo_server.py (BD temporal y clasificador falso, no toca tu BD ni el
+LLM) y, ademas de lo anterior, recorre las interacciones: filtrar, crear (valido e invalido),
+editar estado y responsables, escapado de HTML y persistencia, en claro y oscuro, repitiendo las
+comprobaciones de contraste y desborde TRAS cada cambio (el HTML que inserta HTMX tambien cuenta).
 
 Comprueba, para cada tema (claro/oscuro) y cada ancho (1280, 768 y 375 px):
   - errores de consola, de página y recursos que no cargan;
@@ -16,14 +22,23 @@ Comprueba, para cada tema (claro/oscuro) y cada ancho (1280, 768 y 375 px):
 y además, el interruptor de tema (cambia, se recuerda al recargar y «Auto» sigue al sistema).
 """
 
+import subprocess
 import sys
+import time
+import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-TARGET = sys.argv[1] if len(sys.argv) > 1 else str(Path(__file__).with_name("prototipo.html"))
-OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).with_name("capturas")
-URL = TARGET if TARGET.startswith("http") else Path(TARGET).resolve().as_uri()
+APP_MODE = "--app" in sys.argv
+ARGS = [arg for arg in sys.argv[1:] if arg != "--app"]
+DEMO_PORT = 8765
+TARGET = ARGS[0] if ARGS and not APP_MODE else str(Path(__file__).with_name("prototipo.html"))
+OUT_ARG = ARGS[0] if ARGS and APP_MODE else (ARGS[1] if len(ARGS) > 1 else None)
+OUT = Path(OUT_ARG) if OUT_ARG else Path(__file__).with_name("capturas")
+URL = f"http://127.0.0.1:{DEMO_PORT}/" if APP_MODE else (
+    TARGET if TARGET.startswith("http") else Path(TARGET).resolve().as_uri()
+)
 
 THEMES = ("light", "dark")
 VIEWPORTS = {"1280": (1280, 900), "768": (768, 1024), "375": (375, 812)}
@@ -148,6 +163,188 @@ JS_FOCUS = """
 """
 
 
+def audit_dom(page, label: str, step: str, fail) -> int:
+    """Contraste, bordes de campos y desbordes del DOM ACTUAL (tras un cambio de HTMX incluido)."""
+    where = f"[{label} · {step}]"
+    page.wait_for_timeout(200)  # Tailwind genera las clases del HTML nuevo en el siguiente ciclo
+    result = page.evaluate(JS_CONTRAST)
+    for item in result["failures"]:
+        fail(f"{where} contraste {item['ratio']}:1 < {item['needed']}:1 en {item['el']} «{item['text']}»")
+    for item in page.evaluate(JS_FIELD_BORDERS):
+        fail(f"{where} borde de campo {item['ratio']}:1 < 3:1 en {item['el']}")
+    overflow = page.evaluate(JS_OVERFLOW)
+    if overflow["scrollWidth"] > overflow["clientWidth"] + 1:
+        fail(f"{where} scroll horizontal: {overflow['scrollWidth']} > {overflow['clientWidth']}")
+    return result["checked"]
+
+
+ROWS = "table.tickets tbody tr"
+ASSIGNEES = ROWS + " input[name=set_assignees]"
+STATUSES = ROWS + " select[name=set_status]"
+
+
+def interactions(browser, base_url: str, fail, report: list[str]) -> None:
+    for theme in THEMES:
+        for name in ("1280", "375"):
+            width, height = VIEWPORTS[name]
+            label = f"app {theme:5} {name:>4}px"
+            context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=theme)
+            context.set_default_timeout(10000)  # un selector que ya no existe debe fallar rápido
+            page = context.new_page()
+            problems: list[str] = []
+            page.on("dialog", lambda d, p=problems: (p.append(f"diálogo: {d.message}"), d.dismiss()))
+            page.on("pageerror", lambda e, p=problems: p.append(f"error de página: {str(e)[:100]}"))
+            page.on("console", lambda m, p=problems: p.append(f"consola: {m.text[:100]}") if m.type == "error" else None)
+            page.on("response", lambda r, p=problems: p.append(f"HTTP {r.status} {r.url[-60:]}") if r.status >= 400 else None)
+            page.goto(base_url, wait_until="networkidle")
+            page.wait_for_function("getComputedStyle(document.body).backgroundColor !== 'rgba(0, 0, 0, 0)'")
+            page.evaluate("window.__marker = 'sin-recarga'")
+            measured = 0
+
+            def settle(page=page):
+                page.wait_for_load_state("networkidle")
+                page.wait_for_function("!document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling')")
+
+            def count(page=page):
+                return page.locator(ROWS).count()
+
+            def values_of(selector, page=page):
+                return page.locator(selector).evaluate_all("els => els.map(e => e.value)")
+
+            def check_no_reload(step, page=page, label=label):
+                if page.evaluate("window.__marker") != "sin-recarga":
+                    fail(f"[{label} · {step}] la página se recargó entera (HTMX debía cambiar solo la tabla)")
+                # Tampoco puede perderse el resto de la página: HTMX solo debe repintar la tabla.
+                for selector in ("h1", "#create-form", "#filters", "#tickets-table"):
+                    if page.locator(selector).count() != 1:
+                        fail(f"[{label} · {step}] ha desaparecido «{selector}» (¿se sustituyó más que la tabla?)")
+
+            total = count()
+            if total < 9:
+                fail(f"[{label}] se esperaban 9 tickets de demo y hay {total}")
+            measured += audit_dom(page, label, "inicio", fail)
+
+            # Filtro por estado
+            page.select_option("#filters select[name=status]", "in_progress")
+            settle()
+            check_no_reload("filtro por estado")
+            states = values_of(STATUSES)
+            if not states or set(states) != {"in_progress"}:
+                fail(f"[{label} · filtro por estado] filas inesperadas: {states}")
+            measured += audit_dom(page, label, "filtro por estado", fail)
+            page.select_option("#filters select[name=status]", "")
+            settle()
+
+            # Solo vencidos
+            page.check("#filters input[name=overdue]")
+            settle()
+            overdue_rows = count()
+            badges = page.locator(ROWS + " .badge-danger:text-is('Vencido')").count()
+            if overdue_rows == 0 or badges != overdue_rows:
+                fail(f"[{label} · solo vencidos] {overdue_rows} filas y {badges} marcas «Vencido»")
+            check_no_reload("solo vencidos")
+            measured += audit_dom(page, label, "solo vencidos", fail)
+            page.uncheck("#filters input[name=overdue]")
+            settle()
+
+            # Sin asignar
+            page.check("#filters input[name=unassigned]")
+            settle()
+            filled = [v for v in values_of(ASSIGNEES) if v.strip()]
+            if count() == 0 or filled:
+                fail(f"[{label} · sin asignar] {count()} filas, con responsables: {filled}")
+            page.uncheck("#filters input[name=unassigned]")
+            settle()
+
+            # Responsable (texto + autocompletado)
+            options = page.locator("#assignee-options option").count()
+            if options < 4:
+                fail(f"[{label} · autocompletado] solo {options} nombres en la lista")
+            page.fill("#filters input[name=assignee]", "ana")
+            page.press("#filters input[name=assignee]", "Tab")
+            settle()
+            names = [v.lower() for v in values_of(ASSIGNEES)]
+            if not names or not all("ana" in v for v in names):
+                fail(f"[{label} · filtro responsable] filas inesperadas: {names}")
+            measured += audit_dom(page, label, "filtro responsable", fail)
+            page.fill("#filters input[name=assignee]", "")
+            page.press("#filters input[name=assignee]", "Tab")
+            settle()
+
+            # Alta invalida: error visible y el formulario conserva lo escrito
+            page.fill("#create-form input[name=title]", "!!!")
+            page.fill("#create-form textarea[name=description]", "Texto de prueba")
+            page.click("#create-form button[type=submit]")
+            settle()
+            if not page.locator("#tickets-table [role=alert]").is_visible():
+                fail(f"[{label} · alta inválida] no se muestra el aviso de error")
+            if page.input_value("#create-form input[name=title]") != "!!!":
+                fail(f"[{label} · alta inválida] el formulario se vació pese al error")
+            check_no_reload("alta inválida")
+            measured += audit_dom(page, label, "alta inválida", fail)
+
+            # Alta valida: aparece arriba, el formulario se vacia
+            before = count()
+            page.fill("#create-form input[name=title]", "Ticket creado en la prueba del navegador")
+            page.fill("#create-form textarea[name=description]", "Descripción de la prueba")
+            page.fill("#create-form input[name=assignees]", "Ana, Luis")
+            page.click("#create-form button[type=submit]")
+            settle()
+            first_title = page.locator(ROWS + " td[data-label=Ticket] .font-medium").first.inner_text()
+            if count() != before + 1 or first_title != "Ticket creado en la prueba del navegador":
+                fail(f"[{label} · alta válida] filas {before}→{count()}, primera: «{first_title}»")
+            if page.input_value("#create-form input[name=title]") != "":
+                fail(f"[{label} · alta válida] el formulario no se vació tras crear")
+            if page.locator(ASSIGNEES).first.input_value() != "Ana, Luis":
+                fail(f"[{label} · alta válida] los responsables no se guardaron")
+            check_no_reload("alta válida")
+            measured += audit_dom(page, label, "alta válida", fail)
+
+            # Editar estado desde la fila
+            page.locator(STATUSES).first.select_option("resolved")
+            settle()
+            check_no_reload("editar estado")
+            status = page.locator(STATUSES).first.input_value()
+            if status != "resolved":
+                fail(f"[{label} · editar estado] el estado quedó en «{status}»")
+            measured += audit_dom(page, label, "editar estado", fail)
+
+            # Editar responsables y comprobar que persiste tras recargar
+            first_input = page.locator(ASSIGNEES).first
+            first_input.fill("Eva")
+            first_input.press("Tab")
+            settle()
+            page.reload(wait_until="networkidle")
+            persisted = page.locator(ASSIGNEES).first.input_value()
+            persisted_status = page.locator(STATUSES).first.input_value()
+            if persisted != "Eva" or persisted_status != "resolved":
+                fail(f"[{label} · persistencia] tras recargar: «{persisted}» / «{persisted_status}»")
+            measured += audit_dom(page, label, "tras recargar", fail)
+
+            # Escapado de HTML (ticket de demo con <script> en el titulo)
+            escaped = page.locator(ROWS + " td[data-label=Ticket]:has-text('<script>alert(1)</script>')")
+            if escaped.count() != 1:
+                fail(f"[{label} · escapado] el título con <script> no se ve como texto")
+
+            # Tema forzado + HTMX: el HTML nuevo hereda el tema (clases generadas al insertarlo)
+            forced = "dark" if theme == "light" else "light"
+            page.click(f"[data-mode={forced}]")
+            page.select_option("#filters select[name=category]", "bug")
+            settle()
+            is_dark = page.evaluate("document.documentElement.classList.contains('dark')")
+            if is_dark != (forced == "dark"):
+                fail(f"[{label} · tema forzado] el tema {forced} no se aplicó")
+            if count() == 0:
+                fail(f"[{label} · tema forzado] la tabla quedó vacía")
+            measured += audit_dom(page, label, f"tema {forced} forzado + filtro", fail)
+
+            page.screenshot(path=str(OUT / f"app-{theme}-{name}-final.png"), full_page=True)
+            for entry in problems:
+                fail(f"[{label}] {entry}")
+            report.append(f"{label}: interacciones recorridas, {measured} textos medidos tras los cambios")
+            context.close()
+
+
 def run() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     problems: list[str] = []
@@ -269,6 +466,8 @@ def run() -> int:
         if page.evaluate("document.documentElement.classList.contains('dark')"):
             fail("[interruptor] «Auto» no sigue al sistema tras cambiarlo a claro")
         context.close()
+        if APP_MODE:
+            interactions(browser, URL, fail, report)
         browser.close()
 
     print("\n".join(report))
@@ -280,5 +479,37 @@ def run() -> int:
     return 0
 
 
+def wait_for(url: str, seconds: int = 30) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if response.status == 200:
+                    return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
 if __name__ == "__main__":
-    sys.exit(run())
+    if not APP_MODE:
+        sys.exit(run())
+    server = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name("demo_server.py")), str(DEMO_PORT)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not wait_for(f"http://127.0.0.1:{DEMO_PORT}/health"):
+            print(f"El servidor de demo no arrancó en el puerto {DEMO_PORT} (¿puerto ocupado?).")
+            sys.exit(2)
+        try:
+            code = run()
+        except Exception as error:  # noqa: BLE001 - se informa y se sale con error
+            detail = str(error).strip().splitlines()
+            print("1 PROBLEMA(S):")
+            print(f" - el verificador se interrumpió ({type(error).__name__}): {' | '.join(detail[:3])[:300]}")
+            code = 1
+        sys.exit(code)
+    finally:
+        server.terminate()  # solo el proceso que lanzó este script

@@ -1,0 +1,101 @@
+{# Tema claro/oscuro, tokens de color y componentes. Viene de design/prototipo.html. #}
+{% raw %}
+  <!-- Tema antes de pintar: evita el parpadeo claro→oscuro al cargar. -->
+  <script>
+    (function () {
+      var mode = "auto";
+      try { mode = localStorage.getItem("triagebot-theme") || "auto"; } catch (e) {}
+      var dark = mode === "dark" || (mode === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.dataset.theme = mode;
+    })();
+  </script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Todos los colores son tokens semánticos (variables CSS): el modo oscuro se define UNA vez
+    // abajo, y los componentes nunca llevan un color fijo.
+    const token = (name) => `rgb(var(--${name}) / <alpha-value>)`;
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: Object.fromEntries([
+            "bg", "surface", "surface2", "ink", "muted", "line", "field",
+            "accent", "accent-hover", "on-accent", "accent-soft-bg", "accent-soft-ink",
+            "info-bg", "info-ink", "neutral-bg", "neutral-ink", "ok-bg", "ok-ink",
+            "warn-bg", "warn-ink", "danger-bg", "danger-ink",
+          ].map((name) => [name, token(name)])),
+          fontFamily: {
+            serif: ["ui-serif", "Georgia", "Cambria", "Times New Roman", "serif"],
+            sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica Neue", "Arial", "sans-serif"],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: 250 249 245;          --surface: 255 255 255;     --surface2: 246 244 238;
+      --ink: 20 20 19;            --muted: 94 93 89;
+      --line: 227 218 204;        --field: 143 138 125;
+      --accent: 176 80 48;        --accent-hover: 159 68 38;  --on-accent: 255 255 255;
+      --accent-soft-bg: 247 228 218;  --accent-soft-ink: 143 63 32;
+      --info-bg: 227 236 246;     --info-ink: 31 74 122;
+      --neutral-bg: 238 235 227;  --neutral-ink: 74 73 69;
+      --ok-bg: 228 239 225;       --ok-ink: 45 90 39;
+      --warn-bg: 246 232 200;     --warn-ink: 107 74 10;
+      --danger-bg: 251 228 222;   --danger-ink: 138 42 18;
+    }
+    .dark {
+      color-scheme: dark;
+      --bg: 38 38 36;             --surface: 48 48 46;        --surface2: 56 56 53;
+      --ink: 250 249 245;         --muted: 181 179 169;
+      --line: 74 73 69;           --field: 138 135 126;
+      --accent: 224 138 104;      --accent-hover: 232 156 126; --on-accent: 20 20 19;
+      --accent-soft-bg: 74 45 34;     --accent-soft-ink: 242 180 154;
+      --info-bg: 31 51 71;        --info-ink: 169 203 238;
+      --neutral-bg: 58 57 53;     --neutral-ink: 213 211 202;
+      --ok-bg: 37 64 42;          --ok-ink: 168 217 160;
+      --warn-bg: 74 58 20;        --warn-ink: 240 207 138;
+      --danger-bg: 74 38 32;      --danger-ink: 255 180 160;
+    }
+
+    /* Tabla → tarjetas en pantallas estrechas (sin scroll horizontal). */
+    @media (max-width: 1023px) {
+      table.tickets thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      table.tickets, table.tickets tbody, table.tickets tr, table.tickets td { display: block; }
+      table.tickets tr { padding: 1rem; border-bottom: 1px solid rgb(var(--line)); }
+      table.tickets tr:last-child { border-bottom: 0; }
+      table.tickets td { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: .5rem; align-items: start; padding: .35rem 0; }
+      table.tickets td::before { content: attr(data-label); color: rgb(var(--muted)); font-size: .75rem; padding-top: .3rem; }
+      table.tickets td .badge { justify-self: start; border-radius: .75rem; }
+      table.tickets td select, table.tickets td input { width: 100%; max-width: 16rem; }
+      table.tickets td[data-label="Ticket"] { display: block; padding-top: 0; }
+      table.tickets td[data-label="Ticket"]::before { content: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+  </style>
+
+  <style type="text/tailwindcss">
+    @layer components {
+      .card { @apply rounded-2xl border border-line bg-surface; }
+      .field { @apply w-full rounded-lg border border-field bg-surface px-3 py-2 text-sm text-ink placeholder:text-muted; }
+      .field-sm { @apply rounded-lg border border-field bg-surface px-2 py-1 text-xs text-ink placeholder:text-muted; }
+      .focus-ring { @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent; }
+      .btn-primary { @apply focus-ring inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition-colors hover:bg-accent-hover; }
+      .btn-ghost { @apply focus-ring inline-flex items-center justify-center gap-2 rounded-lg border border-field px-3 py-1.5 text-sm text-ink transition-colors hover:bg-surface2; }
+      .badge { @apply inline-flex max-w-full items-center rounded-full px-2.5 py-0.5 text-left text-xs font-medium lg:whitespace-nowrap; }
+      .badge-info { @apply bg-info-bg text-info-ink; }
+      .badge-neutral { @apply bg-neutral-bg text-neutral-ink; }
+      .badge-ok { @apply bg-ok-bg text-ok-ink; }
+      .badge-warn { @apply bg-warn-bg text-warn-ink; }
+      .badge-danger { @apply bg-danger-bg text-danger-ink; }
+      .badge-accent { @apply bg-accent-soft-bg text-accent-soft-ink; }
+      .th { @apply px-4 py-3 text-left text-xs font-medium text-muted; }
+      .td { @apply px-4 py-3 align-top text-sm; }
+    }
+  </style>
+{% endraw %}

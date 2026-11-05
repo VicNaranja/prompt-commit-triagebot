@@ -1,5 +1,7 @@
 """Rutas HTML/HTMX del tablero (`/` y `/ui/tickets...`). Devuelven HTML, no JSON."""
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -155,3 +157,66 @@ def test_html_is_escaped_so_scripts_are_shown_as_text(client, monkeypatch, field
         assert response.status_code == 200
         assert XSS not in response.text
         assert XSS_ESCAPED in response.text
+
+
+# --- Formulario: solo se vacía si el ticket se creó --------------------------------------------
+
+
+def test_successful_create_tells_htmx_to_reset_the_form(client):
+    response = client.post(
+        "/ui/tickets", data={"title": "Zeta login roto", "description": "No carga la pantalla"}
+    )
+
+    assert response.status_code == 200
+    assert response.headers["HX-Trigger"] == "ticket-created"
+
+
+@pytest.mark.parametrize("title", ["", "!!!"])
+def test_failed_create_does_not_reset_the_form(client, title):
+    response = client.post("/ui/tickets", data={"title": title, "description": "Algo falla"})
+
+    assert 'role="alert"' in response.text
+    assert "HX-Trigger" not in response.headers
+
+
+def test_create_form_resets_only_on_the_ticket_created_event(client):
+    page = client.get("/").text
+
+    assert 'hx-on:ticket-created="this.reset()"' in page
+    assert "after-request" not in page  # antes se vaciaba también con errores de validación
+
+
+# --- Tema claro/oscuro y utilidades de pantalla ------------------------------------------------
+
+
+def test_index_offers_auto_light_and_dark_theme_buttons(client):
+    page = client.get("/").text
+
+    for mode in ("auto", "light", "dark"):
+        assert f'data-mode="{mode}"' in page
+    assert "triagebot-theme" in page  # clave donde se recuerda la elección
+    assert 'darkMode: "class"' in page
+
+
+def test_theme_is_applied_before_the_body_to_avoid_a_flash(client):
+    page = client.get("/").text
+
+    init = page.index('classList.toggle("dark"')
+    assert init < page.index("<body")
+
+
+def test_clear_filters_is_a_plain_link_to_the_unfiltered_board(client):
+    page = client.get("/").text
+
+    assert '<a href="/" class="btn-ghost ml-auto">Limpiar filtros</a>' in page
+
+
+def test_board_shows_the_ticket_count_and_pluralizes(client):
+    assert "ticket" in client.get("/ui/tickets").text
+    create_via_api(client, "Zeta login roto")
+    one = client.get("/ui/tickets").text
+    create_via_api(client, "Omega exportar PDF")
+    two = client.get("/ui/tickets").text
+
+    assert re.search(r"<strong[^>]*>1</strong>\s*ticket\s*<", one)
+    assert re.search(r"<strong[^>]*>2</strong>\s*tickets\s*<", two)

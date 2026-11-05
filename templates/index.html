@@ -4,100 +4,149 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TriageBot</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="data:,">
+  {% include "_theme_head.html" %}
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
-<body class="bg-slate-50 text-slate-900">
-  <main class="mx-auto max-w-6xl p-6">
-    <h1 class="text-3xl font-bold">TriageBot</h1>
-    <p class="mt-2 text-slate-600">Tablero de incidencias con clasificación automática por IA.</p>
+<body class="bg-bg font-sans text-ink antialiased">
+  <a href="#tickets-table" class="focus-ring sr-only rounded-lg bg-surface px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50">Saltar al listado de tickets</a>
 
-    <section class="mt-6 rounded-lg bg-white p-4 shadow-sm ring-1 ring-slate-200">
-      <h2 class="text-lg font-semibold">Nuevo ticket</h2>
+  <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+
+    <header class="flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 class="font-serif text-3xl tracking-tight sm:text-4xl">TriageBot</h1>
+        <p class="mt-2 max-w-prose text-muted">Tablero de incidencias con clasificación automática por IA.</p>
+      </div>
+
+      <div role="group" aria-label="Tema de color" class="inline-flex rounded-xl border border-line bg-surface p-1 text-sm">
+        <button type="button" data-mode="auto" aria-pressed="false" class="focus-ring inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-muted hover:text-ink aria-pressed:bg-surface2 aria-pressed:font-semibold aria-pressed:text-ink">
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3.5" width="15" height="10" rx="1.5"/><path d="M7 17h6M10 13.5V17"/></svg>Auto
+        </button>
+        <button type="button" data-mode="light" aria-pressed="false" class="focus-ring inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-muted hover:text-ink aria-pressed:bg-surface2 aria-pressed:font-semibold aria-pressed:text-ink">
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="3.2"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg>Claro
+        </button>
+        <button type="button" data-mode="dark" aria-pressed="false" class="focus-ring inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-muted hover:text-ink aria-pressed:bg-surface2 aria-pressed:font-semibold aria-pressed:text-ink">
+          <svg aria-hidden="true" viewBox="0 0 20 20" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M16.5 11.5A6.5 6.5 0 0 1 8.5 3.5a6.5 6.5 0 1 0 8 8Z"/></svg>Oscuro
+        </button>
+      </div>
+    </header>
+
+    <section class="card mt-8 p-5 sm:p-6" aria-labelledby="nuevo-ticket">
+      <h2 id="nuevo-ticket" class="font-serif text-xl">Nuevo ticket</h2>
+      {# El formulario solo se vacía si el ticket se creó (el servidor envía el evento
+         `ticket-created`); si hay un error de validación se conserva lo escrito. #}
       <form id="create-form"
-            class="mt-3 grid gap-3"
+            class="mt-4 grid gap-4 md:grid-cols-2"
             hx-post="/ui/tickets"
             hx-include="#filters"
             hx-target="#tickets-table"
             hx-swap="innerHTML"
-            hx-on::after-request="if (event.detail.successful) this.reset()">
-        <label class="grid gap-1 text-sm font-medium">
+            hx-on:ticket-created="this.reset()">
+        <label class="grid gap-1.5 text-sm font-medium">
           Título
-          <input type="text" name="title" maxlength="200" required
-                 class="rounded border border-slate-300 px-3 py-2 font-normal">
+          <input type="text" name="title" maxlength="200" required placeholder="Qué ocurre, en una frase"
+                 class="field focus-ring font-normal">
         </label>
-        <label class="grid gap-1 text-sm font-medium">
+        <label class="grid gap-1.5 text-sm font-medium">
+          <span>Responsables <span class="font-normal text-muted">(opcional, separados por comas)</span></span>
+          <input type="text" name="assignees" placeholder="Ana, Luis" class="field focus-ring font-normal">
+        </label>
+        <label class="grid gap-1.5 text-sm font-medium md:col-span-2">
           Descripción
-          <textarea name="description" rows="3" maxlength="5000" required
-                    class="rounded border border-slate-300 px-3 py-2 font-normal"></textarea>
+          <textarea name="description" rows="3" maxlength="5000" required placeholder="Cuéntanos los detalles"
+                    class="field focus-ring font-normal"></textarea>
         </label>
-        <label class="grid gap-1 text-sm font-medium">
-          Responsables <span class="font-normal text-slate-500">(opcional, separados por comas)</span>
-          <input type="text" name="assignees" placeholder="Ana, Luis"
-                 class="rounded border border-slate-300 px-3 py-2 font-normal">
-        </label>
-        <div>
-          <button type="submit"
-                  class="rounded bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">
-            Crear y clasificar
-          </button>
-          <span class="htmx-indicator ml-2 text-sm text-slate-500">Clasificando…</span>
+        <div class="flex items-center gap-3 md:col-span-2">
+          <button type="submit" class="btn-primary">Crear y clasificar</button>
+          <span class="htmx-indicator text-sm text-muted">Clasificando…</span>
         </div>
       </form>
     </section>
 
     <form id="filters"
-          class="mt-6 flex flex-wrap items-end gap-3"
+          class="mt-8 flex flex-wrap items-end gap-x-4 gap-y-3"
+          aria-label="Filtros del tablero"
           hx-get="/ui/tickets"
           hx-trigger="change"
           hx-target="#tickets-table"
           hx-swap="innerHTML">
-      <label class="grid gap-1 text-sm font-medium">
+      <label class="grid gap-1 text-xs font-medium text-muted">
         Categoría
-        <select name="category" class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
+        <select name="category" class="field focus-ring !w-auto min-w-[11rem] text-ink">
           <option value="">Todas</option>
           {% for value in CATEGORIES %}
-          <option value="{{ value }}">{{ CATEGORY_LABELS[value] }}</option>
+          <option value="{{ value }}">{{ CATEGORY_LABELS[value] }} ({{ value }})</option>
           {% endfor %}
         </select>
       </label>
-      <label class="grid gap-1 text-sm font-medium">
+      <label class="grid gap-1 text-xs font-medium text-muted">
         Prioridad
-        <select name="priority" class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
+        <select name="priority" class="field focus-ring !w-auto text-ink">
           <option value="">Todas</option>
           <option value="P1">P1</option>
           <option value="P2">P2</option>
           <option value="P3">P3</option>
         </select>
       </label>
-      <label class="grid gap-1 text-sm font-medium">
+      <label class="grid gap-1 text-xs font-medium text-muted">
         Estado
-        <select name="status" class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
+        <select name="status" class="field focus-ring !w-auto min-w-[10rem] text-ink">
           <option value="">Todos</option>
           {% for value in STATUSES %}
-          <option value="{{ value }}">{{ STATUS_LABELS[value] }}</option>
+          <option value="{{ value }}">{{ STATUS_LABELS[value] }} ({{ value }})</option>
           {% endfor %}
         </select>
       </label>
-      <label class="grid gap-1 text-sm font-medium">
+      <label class="grid gap-1 text-xs font-medium text-muted">
         Responsable
         <input type="text" name="assignee" list="assignee-options" autocomplete="off"
-               placeholder="Todos"
-               class="rounded border border-slate-300 bg-white px-2 py-1.5 font-normal">
+               placeholder="Todos" class="field focus-ring !w-44 text-ink">
+        {# Fuera de #tickets-table: si no, HTMX la borraría al repintar la tabla. Cada respuesta
+           parcial trae otra copia con hx-swap-oob que la actualiza. #}
+        <datalist id="assignee-options">
+          {% for name in assignee_names %}<option value="{{ name }}">{% endfor %}
+        </datalist>
       </label>
-      <label class="flex items-center gap-2 pb-2 text-sm font-medium">
-        <input type="checkbox" name="unassigned" value="true">
+      <label class="flex items-center gap-2 pb-2 text-sm">
+        <input type="checkbox" name="unassigned" value="true" class="focus-ring h-4 w-4 accent-accent">
         Sin asignar
       </label>
-      <label class="flex items-center gap-2 pb-2 text-sm font-medium">
-        <input type="checkbox" name="overdue" value="true">
+      <label class="flex items-center gap-2 pb-2 text-sm">
+        <input type="checkbox" name="overdue" value="true" class="focus-ring h-4 w-4 accent-accent">
         Solo vencidos
       </label>
+      <a href="/" class="btn-ghost ml-auto">Limpiar filtros</a>
     </form>
 
-    <div id="tickets-table" class="mt-4">
+    <div id="tickets-table" class="mt-6" aria-live="polite">
       {% include "_tickets_table.html" %}
     </div>
   </main>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var query = window.matchMedia("(prefers-color-scheme: dark)");
+      function stored() { try { return localStorage.getItem("triagebot-theme") || "auto"; } catch (e) { return "auto"; } }
+      function apply(mode) {
+        var dark = mode === "dark" || (mode === "auto" && query.matches);
+        root.classList.toggle("dark", dark);
+        root.dataset.theme = mode;
+        document.querySelectorAll("[data-mode]").forEach(function (button) {
+          button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
+        });
+      }
+      document.querySelectorAll("[data-mode]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var mode = button.dataset.mode;
+          try { localStorage.setItem("triagebot-theme", mode); } catch (e) {}
+          apply(mode);
+        });
+      });
+      query.addEventListener("change", function () { if (stored() === "auto") apply("auto"); });
+      apply(stored());
+    })();
+  </script>
 </body>
 </html>

@@ -141,14 +141,31 @@ def _parse_names(raw: str | None) -> list[str] | None:
     return [name.strip() for name in raw.split(",") if name.strip()]
 
 
-def _board_context(tickets: list[dict[str, Any]], error: str | None = None) -> dict[str, Any]:
-    return {"tickets": tickets, "error": error, "assignee_names": db.list_assignee_names()}
+def _board_context(
+    tickets: list[dict[str, Any]], error: str | None = None, oob: bool = False
+) -> dict[str, Any]:
+    """`oob`: respuesta parcial de HTMX, que además refresca la lista de autocompletado."""
+    return {
+        "tickets": tickets,
+        "error": error,
+        "assignee_names": db.list_assignee_names(),
+        "oob": oob,
+    }
 
 
-def _render_table(request: Request, filters: Filters, error: str | None = None) -> HTMLResponse:
+def _render_table(
+    request: Request,
+    filters: Filters,
+    error: str | None = None,
+    trigger: str | None = None,
+) -> HTMLResponse:
+    """Pinta la tabla. `trigger` es un evento HTMX (cabecera `HX-Trigger`) para el formulario."""
     tickets = db.list_tickets(**{**asdict(filters), "overdue": filters.overdue or None})
-    context = _board_context(tickets, error)
-    return templates.TemplateResponse(request, "_tickets_table.html", context)
+    context = _board_context(tickets, error, oob=True)
+    response = templates.TemplateResponse(request, "_tickets_table.html", context)
+    if trigger:
+        response.headers["HX-Trigger"] = trigger
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -210,7 +227,8 @@ def ui_create_ticket(
     except ValidationError as error:
         return _render_table(request, filters, error=_create_error_message(error))
     _create_classified_ticket(payload)
-    return _render_table(request, filters)
+    # El formulario se vacía solo cuando el ticket se ha creado (no si hubo un error).
+    return _render_table(request, filters, trigger="ticket-created")
 
 
 @app.post("/ui/tickets/{ticket_id}", response_class=HTMLResponse)

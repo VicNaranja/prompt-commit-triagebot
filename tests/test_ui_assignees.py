@@ -210,3 +210,24 @@ def test_assignee_names_are_escaped_in_chips_input_and_autocomplete(client):
         assert response.status_code == 200
         assert payload not in response.text
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in response.text
+
+
+def test_autocomplete_list_lives_outside_the_table_that_htmx_replaces(client):
+    """HTMX sustituye el contenido de #tickets-table: la lista no puede estar dentro."""
+    create_via_api(client, "Ticket uno", ["Ana"])
+
+    page = client.get("/").text
+
+    assert page.count('id="assignee-options"') == 1
+    assert page.index('id="assignee-options"') < page.index('id="tickets-table"')
+    assert 'hx-swap-oob' not in page  # la página completa no lleva la copia fuera de banda
+
+
+def test_partial_response_carries_the_oob_list_and_the_full_page_does_not_duplicate_it(client):
+    create_via_api(client, "Ticket uno", ["Ana"])
+
+    partial = client.get("/ui/tickets").text
+    page = client.get("/").text
+
+    assert partial.count('id="assignee-options"') == 1 and 'hx-swap-oob="true"' in partial
+    assert page.count('id="assignee-options"') == 1
